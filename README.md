@@ -21,7 +21,7 @@ Wire the plugin into both Claude Code and Codex in one command, no install
 needed:
 
 ```bash
-npx -p @archastro/redline redline-agent-setup
+npx --yes -p @archastro/redline redline-agent-setup
 ```
 
 It writes plugin files under `~/.claude/plugins/cache/redline/` and
