@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: light; }
+      body {
+        font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        width: 380px;
+        margin: 0;
+        padding: 12px;
+        background: #fff;
+        color: #111;
+      }
+      h2 { margin: 0 0 8px; font-size: 14px; }
+      .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+      .origin { font-size: 11px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+      .ok { background: #d4edda; color: #155724; }
+      .bad { background: #f8d7da; color: #721c24; }
+      .btn { background: #1a1a1a; color: #fff; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+      .btn.secondary { background: #eee; color: #111; }
+      .item { border-top: 1px solid #eee; padding: 8px 0; }
+      .sel { background: #fff176; padding: 1px 4px; border-radius: 2px; font-size: 12px; }
+      .cm { color: #333; font-size: 12px; margin-top: 4px; white-space: pre-wrap; }
+      .meta { font-size: 11px; color: #888; margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+      .meta a { color: #1a73e8; text-decoration: none; }
+      .empty { color: #888; padding: 14px 0; text-align: center; }
+      .status-acked { color: #888; }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <h2>Redline</h2>
+      <span id="status" class="badge bad">checking…</span>
+    </div>
+    <div class="row">
+      <span id="origin" class="origin"></span>
+      <button id="refreshShot" class="btn secondary" title="Re-snap the page screenshot on next submit">Refresh shot</button>
+    </div>
+    <div id="list"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

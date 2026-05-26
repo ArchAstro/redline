@@ -1,0 +1,43 @@
+{
+  "name": "@archastro/redline",
+  "version": "0.1.0",
+  "description": "Highlight live web UI, leave redlines, pipe them into Claude Code. Chrome extension + local sidecar + Claude plugin.",
+  "bin": {
+    "redline-sidecar": "plugin/bin/redline-sidecar",
+    "redline-pull": "plugin/bin/redline-pull",
+    "redline-tail": "plugin/bin/redline-tail",
+    "redline-clear": "plugin/bin/redline-clear"
+  },
+  "files": [
+    "plugin/",
+    "extension/",
+    ".claude-plugin/"
+  ],
+  "scripts": {
+    "release": "npx changeset publish",
+    "version": "npx changeset version"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ArchAstro/redline.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "author": "Calvin Grunewald",
+  "keywords": [
+    "claude-code",
+    "chrome-extension",
+    "redline",
+    "ui-review",
+    "claude-plugin"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "redline",
+  "version": "0.1.0",
+  "description": "Pull and act on UI redlines captured by the Redline Chrome extension via a local HTTP sidecar.",
+  "author": {
+    "name": "Calvin Grunewald"
+  }
+}

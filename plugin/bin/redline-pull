@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Pull pending redlines from the local sidecar, print as markdown, ack each.
+#
+# Usage:
+#   redline-pull                       # all pending, all origins
+#   redline-pull https://example.com   # filter by origin
+#   redline-pull --project firstlanding
+#   redline-pull --no-ack              # peek without consuming
+set -e
+
+PORT="${REDLINE_PORT:-7878}"
+BASE="http://127.0.0.1:$PORT"
+ACK=1
+ORIGIN=""
+PROJECT=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-ack) ACK=0; shift ;;
+    --project) PROJECT="$2"; shift 2 ;;
+    --project=*) PROJECT="${1#*=}"; shift ;;
+    --origin) ORIGIN="$2"; shift 2 ;;
+    --origin=*) ORIGIN="${1#*=}"; shift ;;
+    http://*|https://*) ORIGIN="$1"; shift ;;
+    -h|--help)
+      sed -n '2,8p' "$0"
+      exit 0 ;;
+    *) echo "unknown arg: $1" >&2; exit 1 ;;
+  esac
+done
+
+if ! command -v jq >/dev/null; then
+  echo "redline-pull requires jq" >&2
+  exit 1
+fi
+
+if ! curl -sf "$BASE/health" >/dev/null; then
+  echo "redline sidecar not reachable at $BASE" >&2
+  echo "start it with: redline-sidecar start" >&2
+  exit 1
+fi
+
+urlenc() { printf %s "$1" | jq -sRr @uri; }
+
+q="status=pending"
+[ -n "$ORIGIN" ]  && q="$q&origin=$(urlenc "$ORIGIN")"
+[ -n "$PROJECT" ] && q="$q&project=$(urlenc "$PROJECT")"
+
+items=$(curl -s "$BASE/redlines?$q")
+count=$(echo "$items" | jq 'length')
+
+if [ "$count" = "0" ]; then
+  echo "No pending redlines."
+  exit 0
+fi
+
+echo "# Pending Redlines ($count item$([ "$count" = "1" ] || echo s))"
+echo
+
+echo "$items" | jq -c '.[]' | while IFS= read -r item; do
+  id=$(echo "$item" | jq -r '.id')
+  url=$(echo "$item" | jq -r '.url // ""')
+  title=$(echo "$item" | jq -r '.title // ""')
+  selected=$(echo "$item" | jq -r '.selected_text // ""')
+  comment=$(echo "$item" | jq -r '.comment // ""')
+  selector=$(echo "$item" | jq -r '.context.selector // ""')
+  surrounding=$(echo "$item" | jq -r '.context.surrounding_text // ""')
+  project=$(echo "$item" | jq -r '.project // ""')
+  screenshot=$(echo "$item" | jq -r '.screenshot_id // ""')
+  rect=$(echo "$item" | jq -c '.rect // null')
+
+  echo "## $id"
+  [ -n "$project" ] && echo "**project:** $project  "
+  echo "**page:** [$title]($url)  "
+  [ -n "$selector" ] && echo "**selector:** \`$selector\`  "
+  if [ -n "$screenshot" ]; then
+    echo "**screenshot:** $BASE/screenshots/$screenshot"
+    if [ "$rect" != "null" ]; then
+      echo "**rect:** \`$rect\`"
+    fi
+  fi
+  echo
+  echo "**selected text:**"
+  echo
+  echo "\`\`\`"
+  echo "$selected"
+  echo "\`\`\`"
+  echo
+  echo "**redline:**"
+  echo
+  printf '%s\n' "$comment" | sed 's/^/> /'
+  echo
+  if [ -n "$surrounding" ]; then
+    echo "**surrounding text:**"
+    echo
+    echo "\`\`\`"
+    echo "$surrounding"
+    echo "\`\`\`"
+    echo
+  fi
+
+  if [ "$ACK" = "1" ]; then
+    curl -s -X POST "$BASE/redlines/$id/ack" >/dev/null
+  fi
+done

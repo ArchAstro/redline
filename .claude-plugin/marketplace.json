@@ -1,0 +1,14 @@
+{
+  "name": "redline",
+  "owner": {
+    "name": "Calvin Grunewald"
+  },
+  "description": "Bridge the Redline Chrome extension to Claude Code via a local HTTP sidecar.",
+  "plugins": [
+    {
+      "name": "redline",
+      "source": "./plugin",
+      "description": "Pull and act on UI redlines captured by the Redline Chrome extension."
+    }
+  ]
+}
