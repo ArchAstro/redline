@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -e
-HERE="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve symlinks (e.g. the PATH shim at /opt/homebrew/bin/redline-sidecar)
+# so $HERE points at the real plugin install, not the symlink's parent.
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+  link="$(readlink "$SCRIPT")"
+  case "$link" in
+    /*) SCRIPT="$link" ;;
+    *)  SCRIPT="$(cd "$(dirname "$SCRIPT")" && pwd)/$link" ;;
+  esac
+done
+HERE="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
 PORT="${REDLINE_PORT:-7878}"
 DIR="${REDLINE_DIR:-$HOME/.redline}"
 PIDFILE="$DIR/sidecar.pid"
@@ -28,9 +38,15 @@ cmd_start() {
     echo "already running (pid $pid, port $PORT)"
     return 0
   fi
-  nohup node "$HERE/server.js" >"$LOGFILE" 2>&1 &
-  echo $! > "$PIDFILE"
-  disown 2>/dev/null || true
+  # Double-fork so the daemon escapes our process group. Some harnesses
+  # (e.g. Claude Code's Bash tool) kill the whole tree on tool exit even
+  # with nohup; the inner subshell exits immediately, reparenting node to init.
+  (
+    nohup node "$HERE/server.js" </dev/null >"$LOGFILE" 2>&1 &
+    echo $! > "$PIDFILE"
+    disown 2>/dev/null || true
+  ) &
+  wait $! 2>/dev/null || true
   for _ in $(seq 1 25); do
     sleep 0.1
     if is_running; then

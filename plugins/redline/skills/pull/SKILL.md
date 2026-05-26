@@ -17,11 +17,14 @@ The plugin's `bin/` is on PATH for the session:
 
 ## Workflow
 
-1. **Ensure the sidecar is running.** Start it yourself if it isn't — `redline-sidecar start` is idempotent and returns within ~500ms once `/health` responds. PID lives at `$REDLINE_DIR/sidecar.pid` (default `~/.redline/sidecar.pid`), so it survives across Claude sessions and won't double-start.
-   ```bash
-   redline-sidecar start
-   ```
-   If the command reports an error (port in use by a different process, node missing), surface it to the user — don't try to fight it.
+1. **Ensure the sidecar is running, and keep it running.** Check first with `redline-sidecar status`. If down, start it **as a long-running background process for the whole session** rather than as a detached daemon — some harnesses (Claude Code's Bash tool included) can reap detached children. The reliable pattern:
+
+   - **In Claude Code / Codex CLI**: launch `redline-sidecar foreground` with the Bash tool's `run_in_background: true`. That keeps the server tied to the session and surviving across subsequent tool calls. Do **not** use `redline-sidecar start` from inside an agent — the double-forked daemon can still get killed by the harness, leaving the queue unreachable mid-pull.
+   - **Outside an agent (manual terminal use)**: `redline-sidecar start` is fine and idempotent. PID lives at `$REDLINE_DIR/sidecar.pid` (default `~/.redline/sidecar.pid`).
+
+   After starting, poll `redline-sidecar status` (or `curl -sf http://127.0.0.1:${REDLINE_PORT:-7878}/health`) until it reports `up` before issuing any `redline-pull`. If it never comes up, dump `redline-sidecar logs` and surface the error — don't keep retrying blind.
+
+   **Throughout the session**: before each `redline-pull`, re-check `redline-sidecar status`. If it dropped, restart it the same way (background foreground process). The sidecar must be continuously available for the duration of the redline work.
 
 2. **Decide filters from the user's ask.**
    - Mentioned a project tag ("the firstlanding redlines") → `--project firstlanding`
