@@ -1,6 +1,6 @@
 {
   "name": "@archastro/redline",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Highlight live web UI, leave redlines, pipe them into Claude Code / Codex. Chrome extension + local sidecar + multi-harness plugin.",
   "bin": {
     "redline-agent-setup": "setup/redline-agent-setup.js",

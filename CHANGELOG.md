@@ -1,5 +1,15 @@
 # @archastro/redline
 
+## 0.2.1
+
+### Patch Changes
+
+- Two install/runtime bug fixes.
+
+  - **sidecar:** the `redline-sidecar` shim now resolves symlinks when computing its install root, so the launcher works through `/opt/homebrew/bin/redline-sidecar` (and any other PATH symlink) instead of looking for `/opt/homebrew/server.js`. `start` also double-forks so the daemon survives harnesses (like Claude Code's Bash tool) that reap their tool subprocess group.
+  - **setup:** `installClaude` now materializes a marketplace at `~/.claude/plugins/marketplaces/redline/` and registers it in `known_marketplaces.json`. Without this, `/plugin` showed redline as installed but errored with `Plugin "redline" not found in marketplace "redline"`. `uninstallClaude` tears the new files down.
+  - **skill:** the pull workflow now tells agents to keep the sidecar continuously available (prefer `redline-sidecar foreground` via `run_in_background` inside an agent) and re-check status before every pull.
+
 ## 0.2.0
 
 ### Minor Changes
