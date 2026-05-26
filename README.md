@@ -175,6 +175,10 @@ included but best-effort and brittle across SPA renders.
 
 ### Known v1 limits
 
+- **Localhost-scoped.** The content script only auto-injects on `localhost`,
+  `127.0.0.1`, and `*.localhost` (both `http` and `https`). Add more match
+  patterns to `extension/manifest.json` if you want it on staging/prod
+  domains.
 - Top-frame only — no iframe or shadow-DOM support.
 - Highlight restoration on reload is best-effort (CSS path + offsets); pages
   whose markup shifts between loads will drop stale ones silently.
