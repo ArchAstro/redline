@@ -12,6 +12,7 @@ The plugin's `bin/` is on PATH for the session:
 
 - `redline-sidecar start|stop|status|restart|logs` — manage the local HTTP sidecar daemon (default `start`, detaches and returns when /health is up)
 - `redline-pull [origin] [--project NAME] [--no-ack]` — fetch pending items as markdown; acks each unless `--no-ack`
+- `redline-watch [origin] [--project NAME] [--interval N]` — long-running poller; emits one stdout line per new pending redline id. Built to be consumed by `Monitor` so you wake up exactly when the user leaves a new redline.
 - `redline-tail` — dump all stored items (debug)
 - `redline-clear` — wipe the local redline store
 
@@ -51,6 +52,15 @@ The plugin's `bin/` is on PATH for the session:
    ```bash
    curl -s -X POST "http://127.0.0.1:${REDLINE_PORT:-7878}/redlines/<id>/ack" >/dev/null
    ```
+
+8. **Stay watching for the rest of the session.** Redlining is interactive — the user will keep leaving comments on the page while you work. After the first pull/apply cycle, start a watcher in the background and let `Monitor` drive the loop instead of waiting for the user to say "pull again":
+
+   ```
+   Bash(redline-watch [origin] [--project NAME], run_in_background: true)
+   Monitor(<that shell_id>, until: a new id line appears)
+   ```
+
+   Apply the same filters you used for `redline-pull` (origin, `--project`) so you don't get woken up by unrelated work. Each line `Monitor` surfaces is one new pending redline id — do **not** ack from `redline-watch`'s output; run a full `redline-pull --no-ack [filters]` cycle (steps 3–7) so the user still sees the markdown summary and can confirm before edits land. Keep the watcher running until the user explicitly says they're done; on session wrap-up, kill the background shell.
 
 ## Heuristics
 

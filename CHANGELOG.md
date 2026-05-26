@@ -1,5 +1,11 @@
 # @archastro/redline
 
+## 0.2.2
+
+### Patch Changes
+
+- Add `redline-watch`, a long-running poller that emits one stdout line per newly observed pending redline id. Designed to be consumed by `Monitor` so an agent can stay paired with the page and auto-pull as the user leaves new comments, instead of waiting to be asked. The pull skill now instructs agents to start `redline-watch` in the background after the first pull cycle and run the full review/ack loop on each emitted id (same filters as `redline-pull`).
+
 ## 0.2.1
 
 ### Patch Changes
