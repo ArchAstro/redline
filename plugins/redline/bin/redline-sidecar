@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -e
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+PORT="${REDLINE_PORT:-7878}"
+DIR="${REDLINE_DIR:-$HOME/.redline}"
+PIDFILE="$DIR/sidecar.pid"
+LOGFILE="$DIR/sidecar.log"
+
+mkdir -p "$DIR"
+
+is_running() {
+  curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1
+}
+
+cmd_status() {
+  if is_running; then
+    pid="$(cat "$PIDFILE" 2>/dev/null || echo '?')"
+    echo "up (pid $pid, port $PORT)"
+    return 0
+  fi
+  echo "down"
+  return 1
+}
+
+cmd_start() {
+  if is_running; then
+    pid="$(cat "$PIDFILE" 2>/dev/null || echo '?')"
+    echo "already running (pid $pid, port $PORT)"
+    return 0
+  fi
+  nohup node "$HERE/server.js" >"$LOGFILE" 2>&1 &
+  echo $! > "$PIDFILE"
+  disown 2>/dev/null || true
+  for _ in $(seq 1 25); do
+    sleep 0.1
+    if is_running; then
+      echo "started (pid $(cat "$PIDFILE"), port $PORT, log $LOGFILE)"
+      return 0
+    fi
+  done
+  echo "started but health check timed out — tail $LOGFILE" >&2
+  return 1
+}
+
+cmd_stop() {
+  pid=""
+  [ -f "$PIDFILE" ] && pid="$(cat "$PIDFILE")"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" && rm -f "$PIDFILE"
+    echo "stopped (pid $pid)"
+    return 0
+  fi
+  rm -f "$PIDFILE"
+  echo "not running"
+}
+
+cmd_restart() {
+  cmd_stop || true
+  sleep 0.2
+  cmd_start
+}
+
+cmd_logs() {
+  if [ ! -f "$LOGFILE" ]; then
+    echo "no logs yet at $LOGFILE"
+    return 0
+  fi
+  if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--follow" ]; then
+    tail -f "$LOGFILE"
+  else
+    tail -n "${LINES:-50}" "$LOGFILE"
+  fi
+}
+
+case "${1:-start}" in
+  start)              cmd_start ;;
+  stop)               cmd_stop ;;
+  restart)            cmd_restart ;;
+  status)             cmd_status ;;
+  logs)               shift; cmd_logs "$@" ;;
+  foreground|fg|run)  exec node "$HERE/server.js" ;;
+  -h|--help|help)
+    cat <<EOF
+usage: redline-sidecar [SUBCOMMAND]
+
+  start       (default) start as a detached background process and return when /health is up
+  stop        stop the background process
+  restart     stop + start
+  status      check /health, exit non-zero if down
+  logs [-f]   tail recent server logs (-f to follow)
+  foreground  run the server in the current shell (blocks)
+
+env: REDLINE_PORT (default 7878), REDLINE_DIR (default ~/.redline)
+pid:  \$REDLINE_DIR/sidecar.pid
+log:  \$REDLINE_DIR/sidecar.log
+EOF
+    ;;
+  *) echo "unknown subcommand: $1 (try --help)" >&2; exit 1 ;;
+esac

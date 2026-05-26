@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Redline",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Highlight text on any page, leave a redline, pipe it to Claude Code.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [

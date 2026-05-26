@@ -1,0 +1,34 @@
+{
+  "name": "redline",
+  "version": "0.2.0",
+  "description": "Pull and act on UI redlines captured by the Redline Chrome extension via a local HTTP sidecar.",
+  "author": {
+    "name": "Calvin Grunewald"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "redline",
+    "ui-review",
+    "chrome-extension",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Redline",
+    "shortDescription": "Highlight live web UI, leave redlines, pipe them into Codex.",
+    "longDescription": "Pulls UI redlines captured in the browser by the Redline Chrome extension into Codex sessions. Manages the local HTTP sidecar daemon (start/stop/status) and exposes a skill that fetches, locates, and applies redlines against the source code.",
+    "developerName": "Calvin Grunewald",
+    "category": "Development",
+    "capabilities": [
+      "Interactive",
+      "Write",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/ArchAstro/redline",
+    "defaultPrompt": [
+      "Pull my redlines.",
+      "Show pending redlines.",
+      "Apply the feedback I left on the page."
+    ]
+  }
+}

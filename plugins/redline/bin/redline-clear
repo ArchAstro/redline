@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+DIR="${REDLINE_DIR:-$HOME/.redline}"
+rm -f "$DIR/redlines.json"
+echo "cleared $DIR/redlines.json"

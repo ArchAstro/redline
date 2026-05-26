@@ -1,17 +1,20 @@
 {
   "name": "@archastro/redline",
-  "version": "0.1.1",
-  "description": "Highlight live web UI, leave redlines, pipe them into Claude Code. Chrome extension + local sidecar + Claude plugin.",
+  "version": "0.2.0",
+  "description": "Highlight live web UI, leave redlines, pipe them into Claude Code / Codex. Chrome extension + local sidecar + multi-harness plugin.",
   "bin": {
-    "redline-sidecar": "plugin/bin/redline-sidecar",
-    "redline-pull": "plugin/bin/redline-pull",
-    "redline-tail": "plugin/bin/redline-tail",
-    "redline-clear": "plugin/bin/redline-clear"
+    "redline-agent-setup": "setup/redline-agent-setup.js",
+    "redline-sidecar": ".claude-plugins/redline/bin/redline-sidecar",
+    "redline-pull": ".claude-plugins/redline/bin/redline-pull",
+    "redline-tail": ".claude-plugins/redline/bin/redline-tail",
+    "redline-clear": ".claude-plugins/redline/bin/redline-clear"
   },
   "files": [
-    "plugin/",
-    "extension/",
-    ".claude-plugin/"
+    "setup/",
+    ".claude-plugins/",
+    ".claude-plugin/",
+    "plugins/",
+    "extension/"
   ],
   "scripts": {
     "release": "npx changeset publish",
@@ -35,9 +38,9 @@
   "author": "Calvin Grunewald",
   "keywords": [
     "claude-code",
+    "codex",
     "chrome-extension",
     "redline",
-    "ui-review",
-    "claude-plugin"
+    "ui-review"
   ]
 }

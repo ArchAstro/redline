@@ -1,60 +1,73 @@
 # Redline
 
-Highlight live web UI, leave redlines, pipe them into Claude Code.
+Highlight live web UI, leave redlines, pipe them into Claude Code or Codex.
 
 Three pieces: a Chrome extension for capturing redlines, a tiny local HTTP
-sidecar that stores them, and a Claude Code plugin that pulls them into your
-session so Claude can act on the feedback.
+sidecar that stores them, and a Claude Code / Codex plugin that pulls them
+into your session so the agent can act on the feedback.
 
 ```
-[ Chrome extension ]  --POST-->  [ Sidecar @ 127.0.0.1:7878 ]  --GET-->  [ Claude Code ]
-   select + comment                 ~/.redline/redlines.json              /redline:pull
+[ Chrome extension ]  --POST-->  [ Sidecar @ 127.0.0.1:7878 ]  --GET-->  [ Claude / Codex ]
+   select + comment                 ~/.redline/redlines.json               /redline:pull
 ```
 
 ---
 
 ## Install
 
-### npm package (sidecar CLI globally on PATH)
+### One-shot setup (recommended)
 
-The package is published to GitHub Packages under the `@archastro` scope, so
-you need a `~/.npmrc` that maps that scope to the registry and provides a
-GitHub token with `read:packages` scope.
+Wire the plugin into both Claude Code and Codex in one command, no install
+needed:
+
+```bash
+npx -p @archastro/redline redline-agent-setup
+```
+
+It writes plugin files under `~/.claude/plugins/cache/redline/` and
+`~/.codex/plugins/cache/redline/`, patches `~/.claude/settings.json` /
+`~/.codex/config.toml`, and writes `~/.agents/plugins/marketplace.json` for
+Codex. Idempotent — re-run anytime to update. Flags:
+
+- `--claude-only` / `--codex-only` — scope to one harness
+- `--uninstall` — remove from both
+- `--dry-run` — show what would change without writing
+
+The npm package is under `@archastro` on GitHub Packages, so you need a
+`~/.npmrc` that maps the scope and provides a token with `read:packages`:
 
 ```bash
 echo "@archastro:registry=https://npm.pkg.github.com" >> ~/.npmrc
 echo "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}" >> ~/.npmrc
+```
 
+### As a global CLI
+
+If you want the sidecar / pull CLIs on your shell PATH outside of agent
+sessions:
+
+```bash
 npm install -g @archastro/redline
 ```
 
-This puts the four CLIs on your `$PATH`:
+Puts five binaries on PATH:
+- `redline-agent-setup` — the setup CLI above
 - `redline-sidecar` — start/stop/restart/status/logs the local daemon
 - `redline-pull` — fetch pending redlines as markdown and ack them
 - `redline-tail` — dump everything in the store (debug)
 - `redline-clear` — wipe the local store
 
-### Claude Code plugin
+### Manual plugin install (if you prefer the marketplace flow)
 
-Add the repo as a Claude Code marketplace, then install:
-
+**Claude Code:**
 ```
 /plugin marketplace add ~/archastro/redline
 /plugin install redline@redline
 ```
 
-If you `npm install -g` instead, point the marketplace at the global modules
-dir:
-
-```
-/plugin marketplace add $(npm root -g)/@archastro/redline
-```
-
-The plugin auto-extends `$PATH` with `plugin/bin/`, so the same `redline-*`
-commands work inside any Claude session that has it enabled. It also
-registers the `redline:pull` skill, which Claude invokes automatically when
-you ask things like "pull my redlines" or "fix the things I marked up on the
-page".
+**Codex:** point `~/.codex/config.toml` at a local marketplace dir, then
+enable the plugin. The `redline-agent-setup` script does this for you — use
+it unless you have a reason to do it by hand.
 
 ### Chrome extension
 
@@ -63,7 +76,7 @@ Loaded the standard way:
 1. Open `chrome://extensions`
 2. Toggle on **Developer mode** (top right)
 3. Click **Load unpacked**
-4. Pick the `extension/` directory in this repo
+4. Pick the `extension/` directory in this repo, or `~/.redline/extension/` if you ran `redline-agent-setup`
 
 ---
 
