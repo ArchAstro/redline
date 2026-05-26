@@ -229,13 +229,17 @@ async function installClaude(sourceRoot, dryRun) {
   const known = (await readJsonOrNull(knownMarketplacesPath)) || {};
   const now = new Date().toISOString();
   const prevEntry = known[MARKETPLACE];
+  // Claude's schema renamed local-filesystem marketplaces from `local` → `directory`
+  // (Claude Code >= 2.1.x). Older installs of this setup wrote `source: 'local'`,
+  // which is now rejected and corrupts /plugin entirely. We always write the
+  // current `directory` form so re-running the setup heals a broken state.
   const prevSame = prevEntry
-    && prevEntry.source && prevEntry.source.source === 'local' && prevEntry.source.path === marketplaceRoot
+    && prevEntry.source && prevEntry.source.source === 'directory' && prevEntry.source.path === marketplaceRoot
     && prevEntry.installLocation === marketplaceRoot;
   const nextKnown = {
     ...known,
     [MARKETPLACE]: {
-      source: { source: 'local', path: marketplaceRoot },
+      source: { source: 'directory', path: marketplaceRoot },
       installLocation: marketplaceRoot,
       lastUpdated: prevSame ? prevEntry.lastUpdated : now,
     },

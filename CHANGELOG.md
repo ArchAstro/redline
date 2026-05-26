@@ -1,5 +1,11 @@
 # @archastro/redline
 
+## 0.2.3
+
+### Patch Changes
+
+- **setup:** write the current Claude marketplace shape (`source: "directory"`) into `known_marketplaces.json`. Claude Code 2.1.x renamed the local-filesystem source from `"local"` → `"directory"`, and the old value now fails schema validation with `Marketplace configuration file is corrupted: redline.source.source: Invalid input`, taking down the entire `/plugin` command (not just redline). Re-running `redline-agent-setup` overwrites the bad entry and restores `/plugin`.
+
 ## 0.2.2
 
 ### Patch Changes
