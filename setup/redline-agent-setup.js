@@ -202,15 +202,45 @@ async function pruneOtherVersions(versionedRoot, keep, dryRun) {
 async function installClaude(sourceRoot, dryRun) {
   const pluginRoot = resolvePluginRoot('claude', sourceRoot);
   if (!(await exists(pluginRoot))) throw new Error(`Claude plugin source missing at ${pluginRoot}`);
+  const marketplaceManifestSrc = path.join(sourceRoot, '.claude-plugin', 'marketplace.json');
+  if (!(await exists(marketplaceManifestSrc))) throw new Error(`marketplace.json missing at ${marketplaceManifestSrc}`);
   const version = await readVersion('claude', pluginRoot);
   const home = os.homedir();
   const versionedRoot = path.join(home, '.claude', 'plugins', 'cache', MARKETPLACE, PLUGIN);
   const installRoot = path.join(versionedRoot, version);
   const registryPath = path.join(home, '.claude', 'plugins', 'installed_plugins.json');
   const settingsPath = path.join(home, '.claude', 'settings.json');
+  const marketplaceRoot = path.join(home, '.claude', 'plugins', 'marketplaces', MARKETPLACE);
+  const marketplaceManifestDest = path.join(marketplaceRoot, '.claude-plugin', 'marketplace.json');
+  const marketplacePluginDest = path.join(marketplaceRoot, '.claude-plugins', PLUGIN);
+  const knownMarketplacesPath = path.join(home, '.claude', 'plugins', 'known_marketplaces.json');
 
   const pruned = await pruneOtherVersions(versionedRoot, version, dryRun);
   const filesChanged = await copyTree(pluginRoot, installRoot, dryRun);
+
+  // Materialize the marketplace under ~/.claude/plugins/marketplaces/<MARKETPLACE>/
+  // so Claude can resolve `redline@redline` — without this the plugin shows up as
+  // installed but errors with `Plugin "redline" not found in marketplace "redline"`.
+  const manifestBuf = await fsp.readFile(marketplaceManifestSrc);
+  const manifestChanged = await writeFileIfChanged(marketplaceManifestDest, manifestBuf.toString('utf8'), dryRun);
+  const marketplacePluginChanged = await copyTree(pluginRoot, marketplacePluginDest, dryRun);
+
+  // known_marketplaces.json — register as a local marketplace pointing at the dir above.
+  const known = (await readJsonOrNull(knownMarketplacesPath)) || {};
+  const now = new Date().toISOString();
+  const prevEntry = known[MARKETPLACE];
+  const prevSame = prevEntry
+    && prevEntry.source && prevEntry.source.source === 'local' && prevEntry.source.path === marketplaceRoot
+    && prevEntry.installLocation === marketplaceRoot;
+  const nextKnown = {
+    ...known,
+    [MARKETPLACE]: {
+      source: { source: 'local', path: marketplaceRoot },
+      installLocation: marketplaceRoot,
+      lastUpdated: prevSame ? prevEntry.lastUpdated : now,
+    },
+  };
+  const knownChanged = await writeFileIfChanged(knownMarketplacesPath, JSON.stringify(nextKnown, null, 2) + '\n', dryRun);
 
   // settings.json — set enabledPlugins["redline@redline"] = true
   const settings = (await readJsonOrNull(settingsPath)) || {};
@@ -225,7 +255,6 @@ async function installClaude(sourceRoot, dryRun) {
   const plugins = (registry.plugins && typeof registry.plugins === 'object' && !Array.isArray(registry.plugins))
     ? { ...registry.plugins } : {};
   const entries = Array.isArray(plugins[PLUGIN_KEY]) ? [...plugins[PLUGIN_KEY]] : [];
-  const now = new Date().toISOString();
   const idx = entries.findIndex((e) => e && e.scope === 'user' && !e.projectPath);
   const prevInstalledAt = idx >= 0 && typeof entries[idx].installedAt === 'string' ? entries[idx].installedAt : now;
   const next = { scope: 'user', installPath: installRoot, version, installedAt: prevInstalledAt, lastUpdated: now };
@@ -240,14 +269,16 @@ async function installClaude(sourceRoot, dryRun) {
   return {
     harness: 'claude',
     version,
-    changed: pruned || filesChanged || settingsChanged || registryChanged,
-    paths: { installRoot, settingsPath, registryPath },
+    changed: pruned || filesChanged || manifestChanged || marketplacePluginChanged || knownChanged || settingsChanged || registryChanged,
+    paths: { installRoot, marketplaceRoot, knownMarketplacesPath, settingsPath, registryPath },
   };
 }
 
 async function uninstallClaude(dryRun) {
   const home = os.homedir();
   const cacheRoot = path.join(home, '.claude', 'plugins', 'cache', MARKETPLACE);
+  const marketplaceRoot = path.join(home, '.claude', 'plugins', 'marketplaces', MARKETPLACE);
+  const knownMarketplacesPath = path.join(home, '.claude', 'plugins', 'known_marketplaces.json');
   const registryPath = path.join(home, '.claude', 'plugins', 'installed_plugins.json');
   const settingsPath = path.join(home, '.claude', 'settings.json');
   let changed = false;
@@ -255,6 +286,16 @@ async function uninstallClaude(dryRun) {
   if (await exists(cacheRoot)) {
     changed = true;
     if (!dryRun) await fsp.rm(cacheRoot, { recursive: true, force: true });
+  }
+  if (await exists(marketplaceRoot)) {
+    changed = true;
+    if (!dryRun) await fsp.rm(marketplaceRoot, { recursive: true, force: true });
+  }
+
+  const known = await readJsonOrNull(knownMarketplacesPath);
+  if (known && MARKETPLACE in known) {
+    const { [MARKETPLACE]: _, ...rest } = known;
+    changed = (await writeFileIfChanged(knownMarketplacesPath, JSON.stringify(rest, null, 2) + '\n', dryRun)) || changed;
   }
 
   const settings = await readJsonOrNull(settingsPath);
@@ -271,7 +312,7 @@ async function uninstallClaude(dryRun) {
     changed = (await writeFileIfChanged(registryPath, JSON.stringify(nextRegistry, null, 2) + '\n', dryRun)) || changed;
   }
 
-  return { harness: 'claude', changed, paths: { cacheRoot, settingsPath, registryPath } };
+  return { harness: 'claude', changed, paths: { cacheRoot, marketplaceRoot, knownMarketplacesPath, settingsPath, registryPath } };
 }
 
 // ---------- Codex ----------
