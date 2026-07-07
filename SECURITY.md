@@ -1,0 +1,18 @@
+# Security Policy
+
+## Reporting a Vulnerability
+
+Please report suspected vulnerabilities privately by emailing security@archastro.com. Include:
+
+- the affected Redline version or commit
+- the operating system and browser
+- reproduction steps
+- impact and any proof-of-concept details
+
+Please do not open a public issue for vulnerabilities until we have had a chance to investigate.
+
+## Local Data Model
+
+Redline runs a local sidecar on `127.0.0.1` and stores redline data under `~/.redline` by default. Redlines can include selected text, comments, page URLs, page titles, DOM snippets, and screenshots. This data is local to the machine unless you share it or configure tooling that exports it.
+
+The sidecar only accepts browser-originated requests from Chrome extension origins. Command-line tools without an `Origin` header can still access the sidecar locally.

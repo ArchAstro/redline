@@ -10,10 +10,12 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const os = require('os');
+const http = require('http');
 
 const MARKETPLACE = 'redline';
 const PLUGIN = 'redline';
 const PLUGIN_KEY = `${PLUGIN}@${MARKETPLACE}`;
+const FULL_ACCESS_PATTERN = '<all_urls>';
 
 const HARNESSES = ['claude', 'codex'];
 
@@ -52,8 +54,14 @@ function parseArgs(argv) {
     dryRun: false,
     pluginSource: null,
     help: false,
+    extensionStatus: false,
+    withScreenshots: false,
+    localOnly: false,
   };
   const args = argv.slice(2);
+  if (path.basename(argv[1] || '') === 'redline-extension-status') {
+    opts.extensionStatus = true;
+  }
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     switch (a) {
@@ -61,6 +69,9 @@ function parseArgs(argv) {
       case '--codex-only': opts.codexOnly = true; break;
       case '--uninstall': case '--remove': opts.uninstall = true; break;
       case '--dry-run': opts.dryRun = true; break;
+      case '--extension-status': opts.extensionStatus = true; break;
+      case '--with-screenshots': opts.withScreenshots = true; break;
+      case '--local-only': opts.localOnly = true; break;
       case '--plugin-source': opts.pluginSource = args[++i]; break;
       case '-h': case '--help': opts.help = true; break;
       default:
@@ -74,6 +85,9 @@ function parseArgs(argv) {
   if (opts.claudeOnly && opts.codexOnly) {
     fail('pass at most one of --claude-only and --codex-only');
   }
+  if (opts.withScreenshots && opts.localOnly) {
+    fail('pass at most one of --with-screenshots and --local-only');
+  }
   return opts;
 }
 
@@ -86,6 +100,11 @@ Usage:
   redline-agent-setup --codex-only   # only install the Codex plugin
   redline-agent-setup --uninstall    # remove the plugin from both harnesses
   redline-agent-setup --dry-run      # print what would change without writing
+  redline-agent-setup --with-screenshots
+                                   # enable full page access for screenshots
+  redline-agent-setup --local-only   # switch back to the low-permission mode
+  redline-agent-setup --extension-status
+                                   # check Chrome extension sync + sidecar
 
 Options:
   --plugin-source PATH   Override the source dir (defaults to this npm package).
@@ -153,7 +172,7 @@ async function walk(root) {
   return out;
 }
 
-async function copyTree(src, dst, dryRun) {
+async function copyTree(src, dst, dryRun, transforms = {}) {
   let changed = false;
   const wanted = new Set();
   const files = await walk(src);
@@ -161,7 +180,10 @@ async function copyTree(src, dst, dryRun) {
     const rel = path.relative(src, file);
     wanted.add(rel);
     const target = path.join(dst, rel);
-    const srcBuf = await fsp.readFile(file);
+    let srcBuf = await fsp.readFile(file);
+    if (transforms[rel]) {
+      srcBuf = Buffer.from(transforms[rel](srcBuf.toString('utf8')), 'utf8');
+    }
     const dstBuf = (await exists(target)) ? await fsp.readFile(target) : null;
     if (!dstBuf || !srcBuf.equals(dstBuf)) {
       changed = true;
@@ -446,19 +468,168 @@ async function uninstallCodex(dryRun) {
 
 // ---------- Main ----------
 
-async function syncExtension(sourceRoot, dryRun) {
+function redlineRoot() {
+  return path.join(os.homedir(), '.redline');
+}
+
+function configPath() {
+  return path.join(redlineRoot(), 'config.json');
+}
+
+async function readRedlineConfig() {
+  const config = await readJsonOrNull(configPath());
+  return config && typeof config === 'object' && !Array.isArray(config) ? config : {};
+}
+
+async function writeExtensionMode(mode, dryRun) {
+  const config = await readRedlineConfig();
+  const next = { ...config, extensionMode: mode };
+  return writeFileIfChanged(configPath(), JSON.stringify(next, null, 2) + '\n', dryRun);
+}
+
+async function resolveExtensionMode(opts) {
+  if (opts.withScreenshots) return 'full';
+  if (opts.localOnly) return 'local';
+  const config = await readRedlineConfig();
+  return config.extensionMode === 'full' ? 'full' : 'local';
+}
+
+function extensionModeLabel(mode) {
+  return mode === 'full' ? 'full-access' : 'local-only';
+}
+
+function patchExtensionManifestForMode(raw, mode) {
+  const manifest = JSON.parse(raw);
+  if (mode !== 'full') return JSON.stringify(manifest, null, 2) + '\n';
+
+  const hostPermissions = Array.isArray(manifest.host_permissions) ? manifest.host_permissions : [];
+  manifest.host_permissions = Array.from(new Set([...hostPermissions, FULL_ACCESS_PATTERN]));
+
+  if (Array.isArray(manifest.content_scripts)) {
+    manifest.content_scripts = manifest.content_scripts.map((script) => ({
+      ...script,
+      matches: Array.from(new Set([...(Array.isArray(script.matches) ? script.matches : []), FULL_ACCESS_PATTERN])),
+    }));
+  }
+
+  return JSON.stringify(manifest, null, 2) + '\n';
+}
+
+function detectScreenshotMode(manifest) {
+  const hosts = Array.isArray(manifest?.host_permissions) ? manifest.host_permissions : [];
+  const contentScripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
+  const contentMatches = contentScripts.flatMap((script) => Array.isArray(script.matches) ? script.matches : []);
+  return hosts.includes(FULL_ACCESS_PATTERN) && contentMatches.includes(FULL_ACCESS_PATTERN) ? 'full' : 'local';
+}
+
+async function syncExtension(sourceRoot, dryRun, mode) {
   const extSrc = path.join(sourceRoot, 'extension');
-  const extDst = path.join(os.homedir(), '.redline', 'extension');
+  const extDst = path.join(redlineRoot(), 'extension');
   if (!(await exists(extSrc))) return { harness: 'extension', changed: false, paths: {} };
-  const changed = await copyTree(extSrc, extDst, dryRun);
-  return { harness: 'extension', changed, paths: { extensionRoot: extDst } };
+  const filesChanged = await copyTree(extSrc, extDst, dryRun, {
+    'manifest.json': (raw) => patchExtensionManifestForMode(raw, mode),
+  });
+  const configChanged = await writeExtensionMode(mode, dryRun);
+  return { harness: 'extension', changed: filesChanged || configChanged, paths: { extensionRoot: extDst } };
 }
 
 async function uninstallExtension(dryRun) {
-  const extDst = path.join(os.homedir(), '.redline', 'extension');
+  const extDst = path.join(redlineRoot(), 'extension');
   if (!(await exists(extDst))) return { harness: 'extension', changed: false, paths: {} };
   if (!dryRun) await fsp.rm(extDst, { recursive: true, force: true });
   return { harness: 'extension', changed: true, paths: { extensionRoot: extDst } };
+}
+
+function readPackageVersion(sourceRoot) {
+  const p = path.join(sourceRoot, 'package.json');
+  try {
+    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return data.version || null;
+  } catch {
+    return null;
+  }
+}
+
+function checkSidecar(port) {
+  return new Promise((resolve) => {
+    const req = http.get({
+      hostname: '127.0.0.1',
+      port,
+      path: '/health',
+      timeout: 1000,
+    }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on('error', () => resolve(false));
+  });
+}
+
+async function extensionStatus(sourceRoot) {
+  const extDst = path.join(redlineRoot(), 'extension');
+  const manifestPath = path.join(extDst, 'manifest.json');
+  const packageVersion = readPackageVersion(sourceRoot);
+  const port = parseInt(process.env.REDLINE_PORT || '7878', 10);
+
+  log(color('bold', 'Chrome extension status'));
+  log(color('dim', `path: ${extDst}`));
+
+  let ok = true;
+  if (!(await exists(manifestPath))) {
+    ok = false;
+    log(`  ${color('red', 'missing:')} ${manifestPath}`);
+    log('  Run: ' + color('bold', 'redline setup --with-screenshots'));
+  } else {
+    let manifest = null;
+    try {
+      manifest = JSON.parse(await fsp.readFile(manifestPath, 'utf8'));
+    } catch (e) {
+      ok = false;
+      log(`  ${color('red', 'invalid manifest:')} ${e.message}`);
+    }
+
+    if (manifest) {
+      const installedVersion = manifest.version || '(missing)';
+      const mode = detectScreenshotMode(manifest);
+      log(`  installed: ${installedVersion}`);
+      log(`  package: ${packageVersion || '(unknown)'}`);
+      log(`  mode: ${extensionModeLabel(mode)}`);
+      if (mode === 'full') {
+        log(`  ${color('green', 'screenshots:')} enabled for http/https pages`);
+      } else {
+        log(`  ${color('yellow', 'screenshots:')} limited; enable full visual redlines with ${color('bold', 'redline setup --with-screenshots')}`);
+      }
+      if (packageVersion && installedVersion !== packageVersion) {
+        ok = false;
+        log(`  ${color('yellow', 'out of sync:')} run ${color('bold', 'redline setup')}, then reload Redline in Chrome`);
+      } else {
+        log(`  ${color('green', 'synced:')} extension files match this package version`);
+      }
+    }
+  }
+
+  const sidecarUp = await checkSidecar(port);
+  if (sidecarUp) {
+    log(`  ${color('green', 'sidecar:')} up at http://127.0.0.1:${port}`);
+  } else {
+    ok = false;
+    log(`  ${color('yellow', 'sidecar:')} down at http://127.0.0.1:${port}`);
+    log('  Start it with: ' + color('bold', 'redline start'));
+  }
+
+  log('');
+  log(color('cyan', 'Chrome checklist:'));
+  log('  1. Open ' + color('bold', 'chrome://extensions'));
+  log('  2. Enable ' + color('bold', 'Developer mode'));
+  log('  3. Make sure Redline points at ' + color('bold', extDst));
+  log('  4. Click ' + color('bold', 'Reload') + ' after running setup or pulling updates');
+  log('  5. If Redline is disabled, toggle it back on');
+
+  return ok;
 }
 
 async function main() {
@@ -467,9 +638,19 @@ async function main() {
 
   const targets = opts.claudeOnly ? ['claude'] : opts.codexOnly ? ['codex'] : HARNESSES;
   const sourceRoot = opts.pluginSource ? path.resolve(opts.pluginSource) : resolvePackageRoot();
+  const extensionMode = await resolveExtensionMode(opts);
+
+  if (opts.extensionStatus) {
+    const ok = await extensionStatus(sourceRoot);
+    process.exitCode = ok ? 0 : 1;
+    return;
+  }
 
   log(color('bold', `Redline ${opts.uninstall ? 'uninstall' : 'install'}${opts.dryRun ? ' (dry run)' : ''}`));
   log(color('dim', `source: ${sourceRoot}`));
+  if (!opts.uninstall) {
+    log(color('dim', `extension mode: ${extensionModeLabel(extensionMode)}`));
+  }
   log('');
 
   for (const h of targets) {
@@ -492,7 +673,7 @@ async function main() {
   }
 
   try {
-    const r = opts.uninstall ? await uninstallExtension(opts.dryRun) : await syncExtension(sourceRoot, opts.dryRun);
+    const r = opts.uninstall ? await uninstallExtension(opts.dryRun) : await syncExtension(sourceRoot, opts.dryRun, extensionMode);
     if (r.changed) {
       log(`  ${color('green', 'extension:')} ${opts.uninstall ? 'removed' : 'synced'}`);
       for (const [k, v] of Object.entries(r.paths)) {
@@ -509,8 +690,19 @@ async function main() {
   if (!opts.uninstall) {
     log(color('cyan', 'Next:'));
     log('  1. Reload your Claude / Codex session.');
-    log('  2. Start the sidecar:    ' + color('bold', 'redline-sidecar start'));
-    log('  3. Chrome → ' + color('bold', 'chrome://extensions') + ' → Load unpacked → pick ' + color('bold', path.join(os.homedir(), '.redline', 'extension')));
+    log('  2. Start the sidecar:    ' + color('bold', 'redline start'));
+    log('  3. Chrome → ' + color('bold', 'chrome://extensions') + ' → Load unpacked → pick ' + color('bold', path.join(redlineRoot(), 'extension')));
+    log('  4. If Redline was already loaded, click ' + color('bold', 'Reload') + ' on its extension card.');
+    log('');
+    if (extensionMode === 'full') {
+      log('  ' + color('green', 'screenshots: enabled') + ' — Redline works on any http/https page and captures page screenshots.');
+      log('  Chrome may show broader site-access wording because you chose the full visual redline mode.');
+    } else {
+      log('  ' + color('yellow', 'screenshots: limited') + ' — Redline is installed with low page-access permissions.');
+      log('  For full visual redlines on normal websites, run: ' + color('bold', 'redline setup --with-screenshots'));
+    }
+    log('');
+    log('Check later with: ' + color('bold', 'redline status'));
   }
 }
 

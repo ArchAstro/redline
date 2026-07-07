@@ -38,15 +38,23 @@ cmd_start() {
     echo "already running (pid $pid, port $PORT)"
     return 0
   fi
-  # Double-fork so the daemon escapes our process group. Some harnesses
-  # (e.g. Claude Code's Bash tool) kill the whole tree on tool exit even
-  # with nohup; the inner subshell exits immediately, reparenting node to init.
-  (
-    nohup node "$HERE/server.js" </dev/null >"$LOGFILE" 2>&1 &
-    echo $! > "$PIDFILE"
-    disown 2>/dev/null || true
-  ) &
-  wait $! 2>/dev/null || true
+  # Spawn through Node with detached:true so the sidecar gets its own process
+  # group. Plain nohup/disown can still be killed by agent command runners that
+  # clean up the caller's process group after the command exits.
+  node - "$HERE/server.js" "$PIDFILE" "$LOGFILE" <<'NODE'
+const fs = require('fs');
+const { spawn } = require('child_process');
+
+const [server, pidfile, logfile] = process.argv.slice(2);
+const out = fs.openSync(logfile, 'a');
+const child = spawn(process.execPath, [server], {
+  detached: true,
+  stdio: ['ignore', out, out],
+  env: process.env,
+});
+fs.writeFileSync(pidfile, `${child.pid}\n`);
+child.unref();
+NODE
   for _ in $(seq 1 25); do
     sleep 0.1
     if is_running; then

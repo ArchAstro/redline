@@ -50,15 +50,32 @@ function readBody(req, limitMB = 20) {
   });
 }
 
-function send(res, status, body, headers = {}) {
+function requestOrigin(req) {
+  return req.headers.origin || null;
+}
+
+function isAllowedOrigin(origin) {
+  return !origin || /^chrome-extension:\/\/[a-z0-9]{8,}$/i.test(origin);
+}
+
+function corsHeaders(req, headers = {}) {
+  const origin = requestOrigin(req);
+  if (!origin) return headers;
+  return {
+    'access-control-allow-origin': origin,
+    'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+    'access-control-allow-headers': 'content-type',
+    vary: 'Origin',
+    ...headers,
+  };
+}
+
+function send(req, res, status, body, headers = {}) {
   const isBuf = Buffer.isBuffer(body);
   const data = isBuf || typeof body === 'string' ? body : JSON.stringify(body);
   res.writeHead(status, {
     'content-type': isBuf ? (headers['content-type'] || 'application/octet-stream') : 'application/json',
-    'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type',
-    ...headers,
+    ...corsHeaders(req, headers),
   });
   res.end(data);
 }
@@ -67,11 +84,16 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const route = `${req.method} ${url.pathname}`;
 
-  if (req.method === 'OPTIONS') return send(res, 204, '');
+  if (!isAllowedOrigin(requestOrigin(req))) {
+    res.writeHead(403, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'forbidden origin' }));
+  }
+
+  if (req.method === 'OPTIONS') return send(req, res, 204, '');
 
   try {
     if (route === 'GET /health') {
-      return send(res, 200, { ok: true, port: PORT, db: DB, screenshots: SHOTS });
+      return send(req, res, 200, { ok: true, port: PORT, db: DB, screenshots: SHOTS });
     }
 
     if (route === 'POST /redlines') {
@@ -93,7 +115,7 @@ const server = http.createServer(async (req, res) => {
       const items = readDB();
       items.push(item);
       writeDB(items);
-      return send(res, 201, item);
+      return send(req, res, 201, item);
     }
 
     if (route === 'GET /redlines') {
@@ -104,46 +126,62 @@ const server = http.createServer(async (req, res) => {
       if (status) items = items.filter((i) => i.status === status);
       if (origin) items = items.filter((i) => i.origin === origin);
       if (project) items = items.filter((i) => i.project === project);
-      return send(res, 200, items);
+      return send(req, res, 200, items);
     }
 
     const ackMatch = url.pathname.match(/^\/redlines\/([^/]+)\/ack$/);
     if (req.method === 'POST' && ackMatch) {
       const items = readDB();
       const item = items.find((i) => i.id === ackMatch[1]);
-      if (!item) return send(res, 404, { error: 'not found' });
+      if (!item) return send(req, res, 404, { error: 'not found' });
       item.status = 'acked';
       item.acked_at = new Date().toISOString();
       writeDB(items);
-      return send(res, 200, item);
+      return send(req, res, 200, item);
+    }
+
+    const updateMatch = url.pathname.match(/^\/redlines\/([^/]+)$/);
+    if (req.method === 'PATCH' && updateMatch) {
+      const body = JSON.parse((await readBody(req)).toString('utf8'));
+      const items = readDB();
+      const item = items.find((i) => i.id === updateMatch[1]);
+      if (!item) return send(req, res, 404, { error: 'not found' });
+      for (const field of ['url', 'origin', 'title', 'project', 'selected_text', 'comment', 'context', 'screenshot_id', 'rect']) {
+        if (Object.prototype.hasOwnProperty.call(body, field)) item[field] = body[field] || null;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'selected_text')) item.selected_text = body.selected_text || '';
+      if (Object.prototype.hasOwnProperty.call(body, 'comment')) item.comment = body.comment || '';
+      item.updated_at = new Date().toISOString();
+      writeDB(items);
+      return send(req, res, 200, item);
     }
 
     const delMatch = url.pathname.match(/^\/redlines\/([^/]+)$/);
     if (req.method === 'DELETE' && delMatch) {
       writeDB(readDB().filter((i) => i.id !== delMatch[1]));
-      return send(res, 204, '');
+      return send(req, res, 204, '');
     }
 
     if (route === 'POST /screenshots') {
       const body = JSON.parse((await readBody(req)).toString('utf8'));
       const m = (body.data_url || '').match(/^data:image\/png;base64,(.+)$/);
-      if (!m) return send(res, 400, { error: 'expected { data_url: "data:image/png;base64,..." }' });
+      if (!m) return send(req, res, 400, { error: 'expected { data_url: "data:image/png;base64,..." }' });
       const buf = Buffer.from(m[1], 'base64');
       const id = mkid('ss');
       fs.writeFileSync(path.join(SHOTS, id + '.png'), buf);
-      return send(res, 201, { id, bytes: buf.length });
+      return send(req, res, 201, { id, bytes: buf.length });
     }
 
     const shotMatch = url.pathname.match(/^\/screenshots\/([^/]+)$/);
     if (req.method === 'GET' && shotMatch) {
       const file = path.join(SHOTS, shotMatch[1].replace(/\.png$/, '') + '.png');
-      if (!fs.existsSync(file)) return send(res, 404, { error: 'not found' });
-      return send(res, 200, fs.readFileSync(file), { 'content-type': 'image/png' });
+      if (!fs.existsSync(file)) return send(req, res, 404, { error: 'not found' });
+      return send(req, res, 200, fs.readFileSync(file), { 'content-type': 'image/png' });
     }
 
-    send(res, 404, { error: 'not found', route });
+    send(req, res, 404, { error: 'not found', route });
   } catch (e) {
-    send(res, 500, { error: e.message });
+    send(req, res, 500, { error: e.message });
   }
 });
 
