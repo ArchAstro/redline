@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Redline",
-  "version": "0.2.0",
-  "description": "Highlight text on any page, leave a redline, pipe it to Claude Code.",
+  "version": "0.2.3",
+  "description": "Highlight web UI, leave redlines, and pipe them to Claude Code or Codex.",
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": [
-    "http://127.0.0.1:7878/*",
-    "http://localhost:7878/*"
+    "http://127.0.0.1/*",
+    "http://localhost/*"
   ],
   "background": {
     "service_worker": "background.js"

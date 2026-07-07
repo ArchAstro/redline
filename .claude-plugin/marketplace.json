@@ -1,11 +1,11 @@
 {
   "name": "redline",
   "owner": {
-    "name": "Calvin Grunewald"
+    "name": "ArchAstro"
   },
   "metadata": {
     "description": "Bridge the Redline Chrome extension to Claude Code via a local HTTP sidecar.",
-    "version": "0.2.0",
+    "version": "0.2.3",
     "pluginRoot": ".claude-plugins"
   },
   "plugins": [
@@ -13,7 +13,7 @@
       "name": "redline",
       "source": "./.claude-plugins/redline",
       "description": "Pull and act on UI redlines captured by the Redline Chrome extension.",
-      "version": "0.2.0",
+      "version": "0.2.3",
       "category": "development",
       "tags": ["redline", "ui-review", "chrome-extension"]
     }

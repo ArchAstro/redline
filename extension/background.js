@@ -49,10 +49,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
 
+      if (msg.type === 'update-redline') {
+        const resp = await fetch(`${BASE}/redlines/${msg.id}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(msg.payload),
+        });
+        if (!resp.ok) throw new Error(`PATCH /redlines/${msg.id} ${resp.status}`);
+        const item = await resp.json();
+        sendResponse({ ok: true, item });
+        return;
+      }
+
       if (msg.type === 'delete-redline') {
         const resp = await fetch(`${BASE}/redlines/${msg.id}`, { method: 'DELETE' });
         if (!resp.ok && resp.status !== 204) throw new Error(`DELETE /redlines ${resp.status}`);
         sendResponse({ ok: true });
+        return;
+      }
+
+      if (msg.type === 'list-redlines') {
+        const params = new URLSearchParams();
+        if (msg.status) params.set('status', msg.status);
+        if (msg.origin) params.set('origin', msg.origin);
+        if (msg.project) params.set('project', msg.project);
+        const qs = params.toString();
+        const resp = await fetch(`${BASE}/redlines${qs ? `?${qs}` : ''}`);
+        if (!resp.ok) throw new Error(`GET /redlines ${resp.status}`);
+        sendResponse({ ok: true, items: await resp.json() });
         return;
       }
 

@@ -7,6 +7,7 @@
     button: null,
     popover: null,
     highlights: new Map(),
+    staleTimer: null,
   };
 
   function cssPath(node) {
@@ -149,8 +150,8 @@
     CSS.highlights.set('rl-redline', new Highlight(...ranges));
   }
 
-  function addHighlight(item, range) {
-    STATE.highlights.set(item.id, { range, item });
+  function addHighlight(item, range, ser = null) {
+    STATE.highlights.set(item.id, { range, item, ser });
     refreshCssHighlight();
   }
 
@@ -186,6 +187,7 @@
       const endLen = (endNode.textContent || '').length;
       r.setStart(startNode, Math.min(s.startOffset, startLen));
       r.setEnd(endNode, Math.min(s.endOffset, endLen));
+      if (s.text && r.toString() !== s.text) return null;
       return r;
     } catch {
       return null;
@@ -216,28 +218,50 @@
       rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
     };
 
-    if (existing) {
-      const d = await chrome.runtime.sendMessage({ type: 'delete-redline', id: existing.item.id });
-      if (!d?.ok) throw new Error(d?.error || 'delete failed');
-      await removeFromLocal(existing.item.id);
-      removeHighlight(existing.item.id);
-    }
-
-    const resp = await chrome.runtime.sendMessage({ type: 'submit-redline', payload });
+    const resp = existing
+      ? await chrome.runtime.sendMessage({ type: 'update-redline', id: existing.item.id, payload })
+      : await chrome.runtime.sendMessage({ type: 'submit-redline', payload });
     if (!resp?.ok) throw new Error(resp?.error || 'submit failed');
-    addHighlight(resp.item, range);
-    await persistLocal(resp.item, ser);
+    addHighlight(resp.item, range, ser);
+    await upsertLocal(resp.item, ser);
   }
 
   function localKey() {
     return `rl_items::${location.origin}${location.pathname}`;
   }
 
-  async function persistLocal(item, ser) {
+  async function upsertLocal(item, ser) {
     const key = localKey();
     const data = (await chrome.storage.local.get([key]))[key] || [];
-    data.push({ item, ser });
+    const idx = data.findIndex((x) => x.item.id === item.id);
+    if (idx >= 0) {
+      data[idx] = { item, ser };
+    } else {
+      data.push({ item, ser });
+    }
     await chrome.storage.local.set({ [key]: data });
+  }
+
+  function pageKeyForUrl(url) {
+    try {
+      const u = new URL(url);
+      return `${u.origin}${u.pathname}`;
+    } catch {
+      return null;
+    }
+  }
+
+  async function pendingServerIdsForPage() {
+    const resp = await chrome.runtime.sendMessage({
+      type: 'list-redlines',
+      status: 'pending',
+      origin: location.origin,
+    });
+    if (!resp?.ok) throw new Error(resp?.error || 'list failed');
+    const here = localKey().replace(/^rl_items::/, '');
+    return new Set((resp.items || [])
+      .filter((item) => pageKeyForUrl(item.url) === here)
+      .map((item) => item.id));
   }
 
   async function removeFromLocal(id) {
@@ -246,13 +270,70 @@
     await chrome.storage.local.set({ [key]: data.filter((x) => x.item.id !== id) });
   }
 
-  async function loadLocal() {
+  async function removeManyFromLocal(ids) {
+    if (!ids.length) return;
+    const doomed = new Set(ids);
     const key = localKey();
     const data = (await chrome.storage.local.get([key]))[key] || [];
-    for (const { item, ser } of data) {
-      const range = deserializeRange(ser);
-      if (range) addHighlight(item, range);
+    await chrome.storage.local.set({ [key]: data.filter((x) => !doomed.has(x.item.id)) });
+  }
+
+  function textStillMatches(item, ser, range) {
+    const expected = ser?.text || item?.selected_text || '';
+    return !expected || range.toString() === expected;
+  }
+
+  async function reconcileHighlights() {
+    const key = localKey();
+    const data = (await chrome.storage.local.get([key]))[key] || [];
+    let pendingIds = null;
+    try {
+      pendingIds = await pendingServerIdsForPage();
+    } catch {
+      // The sidecar may be down while browsing; keep local markers in that case.
     }
+    const kept = [];
+    const visible = new Set();
+    for (const { item, ser } of data) {
+      const existing = STATE.highlights.get(item.id);
+      const range = existing?.range || deserializeRange(ser);
+      if (range && textStillMatches(item, ser, range) && (!pendingIds || pendingIds.has(item.id))) {
+        addHighlight(item, range, ser);
+        kept.push({ item, ser });
+        visible.add(item.id);
+      } else {
+        removeHighlight(item.id);
+      }
+    }
+    for (const id of STATE.highlights.keys()) {
+      if (!visible.has(id)) removeHighlight(id);
+    }
+    if (kept.length !== data.length) {
+      await chrome.storage.local.set({ [key]: kept });
+    }
+  }
+
+  async function loadLocal() {
+    await reconcileHighlights();
+  }
+
+  async function pruneStaleHighlights() {
+    const stale = [];
+    for (const [id, h] of STATE.highlights) {
+      if (!textStillMatches(h.item, h.ser, h.range)) {
+        stale.push(id);
+        removeHighlight(id);
+      }
+    }
+    await removeManyFromLocal(stale);
+  }
+
+  function scheduleStalePrune() {
+    if (STATE.staleTimer) clearTimeout(STATE.staleTimer);
+    STATE.staleTimer = setTimeout(() => {
+      STATE.staleTimer = null;
+      pruneStaleHighlights();
+    }, 250);
   }
 
   document.addEventListener('mouseup', () => {
@@ -288,6 +369,22 @@
       }
     }
   });
+
+  window.addEventListener('focus', reconcileHighlights);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') reconcileHighlights();
+  });
+  setInterval(() => {
+    if (document.visibilityState !== 'hidden') reconcileHighlights();
+  }, 15000);
+
+  if (typeof MutationObserver !== 'undefined') {
+    new MutationObserver(scheduleStalePrune).observe(document.documentElement, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  }
 
   loadLocal();
 })();
