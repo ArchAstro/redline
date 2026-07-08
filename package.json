@@ -29,6 +29,12 @@
   "devDependencies": {
     "@changesets/cli": "^2.29.8"
   },
+  "overrides": {
+    "js-yaml": "^4.2.0",
+    "read-yaml-file": {
+      "js-yaml": "^3.15.0"
+    }
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ArchAstro/redline.git"
