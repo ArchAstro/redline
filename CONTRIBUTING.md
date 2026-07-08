@@ -16,8 +16,16 @@ The Chrome extension can be loaded unpacked from `extension/`.
 
 - Keep changes focused and explain the user-visible behavior being changed.
 - Add or update focused tests for sidecar, setup, or CLI behavior when possible.
-- Run `npm test` and `npm run check:syntax` before opening a PR.
+- Run `npm test`, `npm run check:syntax`, and `npm pack --dry-run` before opening a PR.
 - Document new limitations or privacy/security behavior in `README.md`.
+
+## Maintainer Checklist
+
+- Keep `main` protected with required PR review and the `Test` CI check.
+- Dismiss stale approvals when a PR changes.
+- Require conversation resolution before merge.
+- Block force-pushes and branch deletion on `main`.
+- Keep npm publishing on GitHub Actions with provenance enabled.
 
 ## Scope
 

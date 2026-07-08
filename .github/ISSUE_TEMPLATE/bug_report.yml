@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible Redline problem.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a Redline issue. Please include enough detail for someone else to reproduce it.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the behavior you saw and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `redline ...`
+        2. Load the extension from ...
+        3. Select ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Redline version
+      description: Run `redline status` and include the installed/package version.
+      placeholder: "0.2.3"
+    validations:
+      required: true
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      options:
+        - Chrome
+        - Chrome for Testing
+        - Chromium
+        - Other Chromium-based browser
+    validations:
+      required: true
+  - type: dropdown
+    id: extension-mode
+    attributes:
+      label: Extension mode
+      options:
+        - full-access (`redline setup --with-screenshots`)
+        - local-only (`redline setup --local-only`)
+        - not sure
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste `redline status`, relevant `redline logs`, or terminal output. Remove private URLs or page text if needed.
+      render: shell
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, page type, framework, or anything else that helps.

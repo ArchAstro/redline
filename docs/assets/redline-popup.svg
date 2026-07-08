@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760">
+  <rect width="1200" height="760" fill="#eef2ea"/>
+  <rect x="72" y="72" width="620" height="590" fill="#fff" stroke="#ddd"/>
+  <text x="104" y="124" font-family="Helvetica" font-size="30" font-weight="700" fill="#111">Redline</text>
+  <rect x="548" y="92" width="112" height="38" rx="19" fill="#d4edda"/>
+  <text x="574" y="116" font-family="Helvetica" font-size="17" fill="#155724">server up</text>
+  <text x="104" y="184" font-family="Helvetica" font-size="19" fill="#666">http://localhost:5173</text>
+  <rect x="518" y="154" width="142" height="42" rx="7" fill="#eee"/>
+  <text x="540" y="181" font-family="Helvetica" font-size="17" fill="#111">Refresh shot</text>
+  <text x="104" y="232" font-family="Helvetica" font-size="16" fill="#666">2 pending - 5 acked</text>
+  <rect x="104" y="252" width="270" height="44" rx="6" fill="#eee"/>
+  <rect x="104" y="252" width="135" height="44" rx="6" fill="#1a1a1a"/>
+  <text x="139" y="280" font-family="Helvetica" font-size="16" fill="#fff">Pending</text>
+  <text x="293" y="280" font-family="Helvetica" font-size="16" fill="#111">All</text>
+  <line x1="104" y1="326" x2="660" y2="326" stroke="#eee"/>
+  <rect x="104" y="350" width="160" height="30" rx="4" fill="#fff176"/>
+  <text x="112" y="372" font-family="Helvetica" font-size="20" fill="#111">review comments</text>
+  <text x="104" y="414" font-family="Helvetica" font-size="18" fill="#333">Make this more specific to customer approvals.</text>
+  <text x="104" y="454" font-family="Helvetica" font-size="15" fill="#888">pending - 7/8/2026, 9:42 AM -</text>
+  <text x="348" y="454" font-family="Helvetica" font-size="15" fill="#1a73e8">screenshot</text>
+  <line x1="104" y1="490" x2="660" y2="490" stroke="#eee"/>
+  <rect x="104" y="514" width="152" height="30" rx="4" fill="#fff176"/>
+  <text x="112" y="536" font-family="Helvetica" font-size="20" fill="#111">ready for review</text>
+  <text x="104" y="578" font-family="Helvetica" font-size="18" fill="#333">Mention the agent has already opened a PR.</text>
+  <text x="104" y="618" font-family="Helvetica" font-size="15" fill="#888">pending - 7/8/2026, 9:38 AM -</text>
+  <text x="348" y="618" font-family="Helvetica" font-size="15" fill="#1a73e8">screenshot</text>
+  <line x1="104" y1="650" x2="660" y2="650" stroke="#eee"/>
+</svg>

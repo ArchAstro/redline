@@ -17,7 +17,8 @@
     ".claude-plugins/",
     ".claude-plugin/",
     "plugins/",
-    "extension/"
+    "extension/",
+    "docs/assets/"
   ],
   "scripts": {
     "check:syntax": "node -c plugins/redline/server.js && node -c .claude-plugins/redline/server.js && node -c setup/redline-agent-setup.js && node -c setup/redline.js && node -c extension/background.js && node -c extension/content.js && node -c extension/popup.js",
