@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760">
+  <rect width="1200" height="760" fill="#f7f7f4"/>
+  <text x="72" y="82" font-family="Helvetica" font-size="18" font-weight="700" fill="#111">ACME PLATFORM</text>
+  <rect x="966" y="48" width="162" height="48" rx="24" fill="none" stroke="#bbb"/>
+  <text x="1000" y="79" font-family="Helvetica" font-size="18" fill="#333">Book a demo</text>
+  <text x="72" y="214" font-family="Times" font-size="76" fill="#111">Your biggest account</text>
+  <text x="72" y="292" font-family="Times" font-size="76" fill="#111">wakes up to fixes</text>
+  <text x="72" y="370" font-family="Times" font-size="76" fill="#111">ready for review.</text>
+  
+  <text x="72" y="456" font-family="Helvetica" font-size="26" fill="#333">Complex integrations get done faster when</text>
+  <rect x="560" y="426" width="204" height="38" rx="5" fill="#d9e5ff"/>
+  <text x="566" y="456" font-family="Helvetica" font-size="26" fill="#333">review comments</text>
+  <text x="774" y="456" font-family="Helvetica" font-size="26" fill="#333">move directly into the agent workflow.</text>
+  <rect x="598" y="478" width="78" height="34" rx="5" fill="#1a1a1a"/>
+  <text x="615" y="500" font-family="Helvetica" font-size="14" fill="#fff">Redline</text>
+
+  <text x="72" y="708" font-family="Helvetica" font-size="16" fill="#777">Select text on any page to create a redline.</text></svg>

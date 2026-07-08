@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760">
+  <rect width="1200" height="760" fill="#141414"/>
+  <rect x="54" y="54" width="1092" height="652" rx="12" fill="#0f1115" stroke="#333"/>
+  <circle cx="88" cy="88" r="8" fill="#ff5f57"/><circle cx="114" cy="88" r="8" fill="#ffbd2e"/><circle cx="140" cy="88" r="8" fill="#28c840"/>
+  <text x="84" y="142" font-family="Courier" font-size="22" fill="#c9d1d9">$ redline pull --no-ack</text>
+  <text x="84" y="200" font-family="Courier" font-size="22" fill="#f0f6fc"># Pending Redlines (2 items)</text>
+  <text x="84" y="260" font-family="Courier" font-size="20" fill="#8b949e">## rl_mr9l5le0eaf09a70</text>
+  <text x="84" y="306" font-family="Courier" font-size="20" fill="#c9d1d9">page: Redline Full Install E2E</text>
+  <text x="84" y="352" font-family="Courier" font-size="20" fill="#c9d1d9">selected text:</text>
+  <rect x="84" y="374" width="302" height="38" rx="5" fill="#fff176"/>
+  <text x="98" y="399" font-family="Courier" font-size="20" fill="#111">review comments</text>
+  <text x="84" y="462" font-family="Courier" font-size="20" fill="#c9d1d9">redline:</text>
+  <text x="84" y="506" font-family="Courier" font-size="20" fill="#f0f6fc">&gt; Make this more specific to customer approvals.</text>
+  <text x="84" y="568" font-family="Courier" font-size="20" fill="#8b949e">screenshot: http://127.0.0.1:7878/screenshots/ss_...</text>
+</svg>

@@ -12,6 +12,29 @@ into your session so the agent can act on the feedback.
    select + comment                 ~/.redline/redlines.json               /redline:pull
 ```
 
+## How It Works
+
+Select text on a page and click **Redline**.
+
+![Redline button after selecting text](docs/assets/redline-select-button.png)
+
+Add a comment without leaving the product surface.
+
+![New redline popover](docs/assets/redline-popover.png)
+
+Pending feedback stays highlighted until an agent pulls and acks it.
+
+![Pending redline highlight](docs/assets/redline-highlight.png)
+
+Use the extension popup to review pending feedback for the current origin.
+
+![Redline extension popup](docs/assets/redline-popup.png)
+
+Pull redlines into an agent workflow from the terminal or through the bundled
+Claude Code / Codex plugin.
+
+![redline pull terminal output](docs/assets/redline-pull-terminal.png)
+
 ---
 
 ## Install
@@ -229,6 +252,16 @@ Redlines can include selected text, comments, page URLs, page titles, DOM
 snippets, and screenshots. Treat that directory as developer data; do not share
 it publicly unless you have reviewed its contents.
 
+The sidecar listens on `127.0.0.1` only. Browser-originated writes are accepted
+from Chrome extension origins; ordinary web pages cannot post redlines directly
+to the sidecar. Command-line tools without an `Origin` header can access the
+sidecar locally.
+
+`redline setup --with-screenshots` gives the unpacked extension broader
+http/https page access so it can inject on normal websites and capture visible
+page screenshots. Use `redline setup --local-only` if you only want the
+lower-permission localhost workflow.
+
 ### Known v1 limits
 
 - Chrome/Chromium only. Safari and Firefox are not supported yet.
@@ -299,6 +332,10 @@ git push                 # opens a 'chore: version packages' PR via CI
 When the version-packages PR merges to `main`, the
 [`release.yml`](.github/workflows/release.yml) workflow runs
 `npx changeset publish` and pushes the new version to npm.
+The workflow requests GitHub OIDC (`id-token: write`) and sets
+`NPM_CONFIG_PROVENANCE=true` so npm can attach provenance when the package is
+published from GitHub Actions. Configure npm Trusted Publishing for this
+repository/package before removing `NPM_TOKEN`.
 
 To publish manually without the PR dance (needs `NODE_AUTH_TOKEN`):
 
