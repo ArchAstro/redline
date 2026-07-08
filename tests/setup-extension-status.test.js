@@ -46,6 +46,7 @@ test('setup with screenshots syncs a full-access extension and persists the mode
     assert.equal(result.status, 0);
     assert.match(result.stdout, /screenshots: enabled/);
     assert.match(result.stdout, /works on any http\/https page/);
+    assert.match(result.stdout, /reload the page tabs/);
 
     const manifest = JSON.parse(fs.readFileSync(path.join(home, '.redline/extension/manifest.json'), 'utf8'));
     assert.ok(manifest.host_permissions.includes('<all_urls>'));
@@ -127,6 +128,7 @@ test('extension status reports version mismatch and reload guidance', () => {
     assert.match(result.stdout, /redline setup/);
     assert.match(result.stdout, /chrome:\/\/extensions/);
     assert.match(result.stdout, /Reload/);
+    assert.match(result.stdout, /reload the page tabs/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
