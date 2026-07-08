@@ -18,3 +18,10 @@ test('content script removes stale highlights when page text changes', () => {
   assert.match(content, /function pruneStaleHighlights\(/);
   assert.match(content, /new MutationObserver/);
 });
+
+test('content script handles missing extension storage without crashing', () => {
+  assert.match(content, /function storageLocal\(/);
+  assert.match(content, /async function getLocal\(/);
+  assert.match(content, /async function setLocal\(/);
+  assert.doesNotMatch(content, /chrome\.storage\.local/);
+});

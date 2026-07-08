@@ -12,6 +12,30 @@
     staleTimer: null,
   };
 
+  function storageLocal() {
+    return globalThis.chrome?.storage?.local || null;
+  }
+
+  async function getLocal(keys) {
+    const area = storageLocal();
+    if (!area) return {};
+    try {
+      return await area.get(keys);
+    } catch {
+      return {};
+    }
+  }
+
+  async function setLocal(value) {
+    const area = storageLocal();
+    if (!area) return;
+    try {
+      await area.set(value);
+    } catch {
+      // Storage is only used for local marker persistence and convenience defaults.
+    }
+  }
+
   function cssPath(node) {
     if (node && node.nodeType !== 1) node = node.parentElement;
     const parts = [];
@@ -102,7 +126,7 @@
       ta.value = existing.item.comment || '';
       proj.value = existing.item.project || '';
     } else {
-      chrome.storage.local.get(['rl_last_project'], ({ rl_last_project }) => {
+      getLocal(['rl_last_project']).then(({ rl_last_project }) => {
         if (rl_last_project) proj.value = rl_last_project;
       });
     }
@@ -115,7 +139,7 @@
       try {
         await submit({ range, existing, comment: ta.value, project: proj.value.trim() });
         status.textContent = 'sent';
-        chrome.storage.local.set({ rl_last_project: proj.value.trim() || null });
+        setLocal({ rl_last_project: proj.value.trim() || null });
         setTimeout(closePopover, 400);
       } catch (e) {
         status.textContent = 'error: ' + e.message;
@@ -234,14 +258,14 @@
 
   async function upsertLocal(item, ser) {
     const key = localKey();
-    const data = (await chrome.storage.local.get([key]))[key] || [];
+    const data = (await getLocal([key]))[key] || [];
     const idx = data.findIndex((x) => x.item.id === item.id);
     if (idx >= 0) {
       data[idx] = { item, ser };
     } else {
       data.push({ item, ser });
     }
-    await chrome.storage.local.set({ [key]: data });
+    await setLocal({ [key]: data });
   }
 
   function pageKeyForUrl(url) {
@@ -268,16 +292,16 @@
 
   async function removeFromLocal(id) {
     const key = localKey();
-    const data = (await chrome.storage.local.get([key]))[key] || [];
-    await chrome.storage.local.set({ [key]: data.filter((x) => x.item.id !== id) });
+    const data = (await getLocal([key]))[key] || [];
+    await setLocal({ [key]: data.filter((x) => x.item.id !== id) });
   }
 
   async function removeManyFromLocal(ids) {
     if (!ids.length) return;
     const doomed = new Set(ids);
     const key = localKey();
-    const data = (await chrome.storage.local.get([key]))[key] || [];
-    await chrome.storage.local.set({ [key]: data.filter((x) => !doomed.has(x.item.id)) });
+    const data = (await getLocal([key]))[key] || [];
+    await setLocal({ [key]: data.filter((x) => !doomed.has(x.item.id)) });
   }
 
   function textStillMatches(item, ser, range) {
@@ -287,7 +311,7 @@
 
   async function reconcileHighlights() {
     const key = localKey();
-    const data = (await chrome.storage.local.get([key]))[key] || [];
+    const data = (await getLocal([key]))[key] || [];
     let pendingIds = null;
     try {
       pendingIds = await pendingServerIdsForPage();
@@ -311,7 +335,7 @@
       if (!visible.has(id)) removeHighlight(id);
     }
     if (kept.length !== data.length) {
-      await chrome.storage.local.set({ [key]: kept });
+      await setLocal({ [key]: kept });
     }
   }
 
