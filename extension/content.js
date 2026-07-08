@@ -2,6 +2,8 @@
   if (window.__rlInjected) return;
   window.__rlInjected = true;
 
+  const RECONCILE_INTERVAL_MS = 2000;
+
   const STATE = {
     pendingSelection: null,
     button: null,
@@ -371,12 +373,13 @@
   });
 
   window.addEventListener('focus', reconcileHighlights);
+  window.addEventListener('pageshow', reconcileHighlights);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') reconcileHighlights();
   });
   setInterval(() => {
     if (document.visibilityState !== 'hidden') reconcileHighlights();
-  }, 15000);
+  }, RECONCILE_INTERVAL_MS);
 
   if (typeof MutationObserver !== 'undefined') {
     new MutationObserver(scheduleStalePrune).observe(document.documentElement, {

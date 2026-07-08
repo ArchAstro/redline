@@ -627,7 +627,8 @@ async function extensionStatus(sourceRoot) {
   log('  2. Enable ' + color('bold', 'Developer mode'));
   log('  3. Make sure Redline points at ' + color('bold', extDst));
   log('  4. Click ' + color('bold', 'Reload') + ' after running setup or pulling updates');
-  log('  5. If Redline is disabled, toggle it back on');
+  log('  5. Then reload the page tabs you already had open so their content scripts update');
+  log('  6. If Redline is disabled, toggle it back on');
 
   return ok;
 }
@@ -693,6 +694,7 @@ async function main() {
     log('  2. Start the sidecar:    ' + color('bold', 'redline start'));
     log('  3. Chrome → ' + color('bold', 'chrome://extensions') + ' → Load unpacked → pick ' + color('bold', path.join(redlineRoot(), 'extension')));
     log('  4. If Redline was already loaded, click ' + color('bold', 'Reload') + ' on its extension card.');
+    log('  5. Then reload the page tabs you already had open so their content scripts update.');
     log('');
     if (extensionMode === 'full') {
       log('  ' + color('green', 'screenshots: enabled') + ' — Redline works on any http/https page and captures page screenshots.');
