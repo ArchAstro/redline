@@ -1,0 +1,45 @@
+name = "archastro-oss-interest"
+main = "index.js"
+compatibility_date = "2026-07-17"
+workers_dev = false
+routes = [
+  { pattern = "oss.archastro.ai/api/oss/lab-interest*", zone_name = "archastro.ai" }
+]
+
+[vars]
+ALLOWED_ORIGINS = "https://oss.archastro.ai"
+MAIL_FROM = "ArchAstro OSS <oss@archastro.ai>"
+PUBLIC_BASE_URL = "https://oss.archastro.ai"
+CONSENT_POLICY_VERSION = "replace-with-current-policy-version"
+CONFIRMATION_TOKEN_TTL_SECONDS = "86400"
+PENDING_REQUEST_GRACE_DAYS = "7"
+VOTE_RETENTION_DAYS = "365"
+UNSUBSCRIBED_EMAIL_RETENTION_DAYS = "30"
+UNSUBSCRIBED_IDENTITY_RETENTION_DAYS = "365"
+CONFIRMED_REQUEST_RETENTION_DAYS = "30"
+CONSENT_EVENT_RETENTION_DAYS = "730"
+ERASED_IDENTITY_RETENTION_DAYS = "30"
+OUTBOX_MAX_ATTEMPTS = "5"
+OUTBOX_BACKOFF_BASE_SECONDS = "60"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "replace-with-d1-database-name"
+database_id = "replace-with-d1-database-id"
+migrations_dir = "migrations"
+
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "replace-with-unique-numeric-namespace-id"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+[triggers]
+crons = ["*/15 * * * *"]
+
+# Set secrets outside this file; never commit their values:
+# npx wrangler secret put RESEND_API_KEY
+# npx wrangler secret put CONFIRMATION_SIGNING_SECRET
+# npx wrangler secret put IDENTITY_HASH_SECRET

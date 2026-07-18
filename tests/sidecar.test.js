@@ -18,7 +18,7 @@ async function freePort() {
   });
 }
 
-function request(port, method, pathname, { origin, body } = {}) {
+function request(port, method, pathname, { origin, token, body } = {}) {
   const payload = body == null ? null : Buffer.from(JSON.stringify(body));
   return new Promise((resolve, reject) => {
     const req = http.request({
@@ -28,6 +28,7 @@ function request(port, method, pathname, { origin, body } = {}) {
       path: pathname,
       headers: {
         ...(origin ? { origin } : {}),
+        ...(token ? { 'x-redline-token': token } : {}),
         ...(payload ? { 'content-type': 'application/json', 'content-length': payload.length } : {}),
       },
     }, (res) => {
@@ -49,6 +50,8 @@ function request(port, method, pathname, { origin, body } = {}) {
 async function startSidecar(t) {
   const port = await freePort();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-test-'));
+  const authToken = 'test-capability-token-with-at-least-32-bytes';
+  fs.writeFileSync(path.join(dir, 'auth-token'), authToken, { mode: 0o600 });
   const child = spawn(process.execPath, ['plugins/redline/server.js'], {
     cwd: path.resolve(__dirname, '..'),
     env: { ...process.env, REDLINE_PORT: String(port), REDLINE_DIR: dir },
@@ -70,13 +73,23 @@ async function startSidecar(t) {
     }
     try {
       const health = await request(port, 'GET', '/health');
-      if (health.status === 200) return { port, dir };
+      if (health.status === 200) return { port, dir, authToken };
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
   throw new Error(`sidecar did not start: ${stderr}`);
 }
+
+test('Codex sidecar entry point delegates to the canonical server', () => {
+  const entryPoint = fs.readFileSync(
+    path.resolve(__dirname, '../plugins/redline/server.js'),
+    'utf8',
+  );
+
+  assert.match(entryPoint, /require\(['"]\.\.\/\.\.\/\.claude-plugins\/redline\/server\.js['"]\)/);
+  assert.doesNotMatch(entryPoint, /createServer|function readDB|function writeDB/);
+});
 
 test('sidecar rejects browser requests from arbitrary website origins', async (t) => {
   const { port } = await startSidecar(t);
@@ -90,16 +103,33 @@ test('sidecar rejects browser requests from arbitrary website origins', async (t
 });
 
 test('sidecar allows Chrome extension origins and reflects the allowed origin', async (t) => {
-  const { port } = await startSidecar(t);
+  const { port, authToken } = await startSidecar(t);
 
   const response = await request(port, 'POST', '/redlines', {
     origin: 'chrome-extension://abcdefghijklmnop',
+    token: authToken,
     body: { url: 'https://app.example', origin: 'https://app.example', selected_text: 'Save', comment: 'Use Submit' },
   });
 
   assert.equal(response.status, 201);
   assert.equal(response.headers['access-control-allow-origin'], 'chrome-extension://abcdefghijklmnop');
   assert.equal(response.json.comment, 'Use Submit');
+});
+
+test('sidecar rejects extension requests without the setup capability token', async (t) => {
+  const { port } = await startSidecar(t);
+
+  const missing = await request(port, 'GET', '/redlines', {
+    origin: 'chrome-extension://abcdefghijklmnop',
+  });
+  const wrong = await request(port, 'GET', '/redlines', {
+    origin: 'chrome-extension://abcdefghijklmnop',
+    token: 'wrong-token',
+  });
+
+  assert.equal(missing.status, 401);
+  assert.equal(wrong.status, 401);
+  assert.equal(missing.headers['access-control-allow-origin'], 'chrome-extension://abcdefghijklmnop');
 });
 
 test('sidecar updates an existing redline without changing its id', async (t) => {

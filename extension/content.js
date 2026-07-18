@@ -36,6 +36,13 @@
     }
   }
 
+  function submissionErrorMessage(error) {
+    if (/Extension context invalidated/i.test(error?.message || '')) {
+      return 'Redline updated. Refresh this page and try again.';
+    }
+    return error?.message || 'request failed';
+  }
+
   function cssPath(node) {
     if (node && node.nodeType !== 1) node = node.parentElement;
     const parts = [];
@@ -142,7 +149,7 @@
         setLocal({ rl_last_project: proj.value.trim() || null });
         setTimeout(closePopover, 400);
       } catch (e) {
-        status.textContent = 'error: ' + e.message;
+        status.textContent = 'error: ' + submissionErrorMessage(e);
       }
     });
     if (existing) {
@@ -156,7 +163,7 @@
           removeHighlight(existing.item.id);
           closePopover();
         } catch (e) {
-          status.textContent = 'error: ' + e.message;
+          status.textContent = 'error: ' + submissionErrorMessage(e);
         }
       });
     }

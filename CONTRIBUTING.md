@@ -8,6 +8,7 @@ Redline is an ArchAstro-maintained open-source tool for leaving browser UI feedb
 npm install
 npm test
 npm run check:syntax
+npm run check:versions
 ```
 
 The Chrome extension can be loaded unpacked from `extension/`.
@@ -16,7 +17,7 @@ The Chrome extension can be loaded unpacked from `extension/`.
 
 - Keep changes focused and explain the user-visible behavior being changed.
 - Add or update focused tests for sidecar, setup, or CLI behavior when possible.
-- Run `npm test`, `npm run check:syntax`, and `npm pack --dry-run` before opening a PR.
+- Run `npm test`, `npm run check:syntax`, `npm run check:versions`, and `npm pack --dry-run` before opening a PR.
 - Document new limitations or privacy/security behavior in `README.md`.
 
 ## Maintainer Checklist

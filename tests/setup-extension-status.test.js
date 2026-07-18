@@ -16,10 +16,10 @@ function runStatus(home) {
   });
 }
 
-function runSetup(args, home) {
+function runSetup(args, home, envOverrides = {}) {
   return spawnSync(process.execPath, [SETUP, ...args, '--plugin-source', ROOT], {
     cwd: ROOT,
-    env: { ...process.env, HOME: home, REDLINE_PORT: '65534' },
+    env: { ...process.env, HOME: home, REDLINE_PORT: '65534', ...envOverrides },
     encoding: 'utf8',
   });
 }
@@ -38,6 +38,26 @@ test('extension status reports missing synced extension', () => {
   }
 });
 
+test('setup injects custom sidecar directory and port configuration into the extension', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-status-custom-'));
+  const customDir = path.join(home, 'custom-redline-data');
+  try {
+    const result = runSetup([], home, {
+      REDLINE_DIR: customDir,
+      REDLINE_PORT: '61234',
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const token = fs.readFileSync(path.join(customDir, 'auth-token'), 'utf8').trim();
+    const installedAuth = fs.readFileSync(path.join(home, '.redline/extension/auth.js'), 'utf8');
+    assert.match(installedAuth, new RegExp(token));
+    assert.match(installedAuth, /port:\s*61234/);
+    assert.equal(fs.existsSync(path.join(home, '.redline/auth-token')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('setup with screenshots syncs a full-access extension and persists the mode', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-status-full-'));
   try {
@@ -51,6 +71,14 @@ test('setup with screenshots syncs a full-access extension and persists the mode
     const manifest = JSON.parse(fs.readFileSync(path.join(home, '.redline/extension/manifest.json'), 'utf8'));
     assert.ok(manifest.host_permissions.includes('<all_urls>'));
     assert.ok(manifest.content_scripts[0].matches.includes('<all_urls>'));
+
+    const authTokenPath = path.join(home, '.redline/auth-token');
+    const authToken = fs.readFileSync(authTokenPath, 'utf8').trim();
+    const installedAuth = fs.readFileSync(path.join(home, '.redline/extension/auth.js'), 'utf8');
+    assert.ok(authToken.length >= 43);
+    assert.equal(fs.statSync(authTokenPath).mode & 0o777, 0o600);
+    assert.match(installedAuth, new RegExp(authToken));
+    assert.doesNotMatch(installedAuth, /__REDLINE_AUTH_TOKEN__/);
 
     const config = JSON.parse(fs.readFileSync(path.join(home, '.redline/config.json'), 'utf8'));
     assert.equal(config.extensionMode, 'full');
@@ -129,6 +157,22 @@ test('extension status reports version mismatch and reload guidance', () => {
     assert.match(result.stdout, /chrome:\/\/extensions/);
     assert.match(result.stdout, /Reload/);
     assert.match(result.stdout, /reload the page tabs/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('extension status detects changed files even when the version matches', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-status-file-stale-'));
+  try {
+    assert.equal(runSetup(['--with-screenshots'], home).status, 0);
+    fs.appendFileSync(path.join(home, '.redline/extension/background.js'), '\n// stale copy\n');
+
+    const result = runStatus(home);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /out of sync/);
+    assert.doesNotMatch(result.stdout, /files match/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

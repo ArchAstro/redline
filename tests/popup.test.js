@@ -18,3 +18,9 @@ test('popup gives useful setup and extension reload guidance', () => {
   assert.match(js, /chrome\.tabs\.create\(\{ url: 'chrome:\/\/extensions'/);
   assert.match(html, /~\/\.redline\/extension/);
 });
+
+test('popup loads injected auth before making sidecar requests', () => {
+  assert.match(html, /<script src="auth\.js"><\/script>\s*<script src="popup\.js"><\/script>/);
+  assert.match(js, /REDLINE_AUTH_HEADERS/);
+  assert.match(js, /x-redline-token/);
+});
