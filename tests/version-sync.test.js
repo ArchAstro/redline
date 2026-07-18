@@ -46,3 +46,8 @@ test('release version command synchronizes every public manifest', () => {
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test('CI uses a Node release that provides the built-in SQLite test runtime', () => {
+  const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  assert.match(workflow, /node-version:\s*['"]24['"]/);
+});
