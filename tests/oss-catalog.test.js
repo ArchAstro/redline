@@ -25,6 +25,15 @@ test("OSS home is a compact repository index", () => {
   assert.doesNotMatch(html, /class="hero"|class="oss-proof"|class="start-path"|class="directory"/);
 });
 
+test("catalog intro is centered instead of hanging from the left edge", () => {
+  assert.match(
+    css,
+    /\.catalog-intro\s*{[^}]*max-width:\s*720px;[^}]*margin-inline:\s*auto;[^}]*text-align:\s*center;/s
+  );
+  assert.match(css, /\.catalog-intro h1\s*{[^}]*margin-inline:\s*auto;/s);
+  assert.match(css, /\.catalog-intro > p:last-child\s*{[^}]*margin-inline:\s*auto;/s);
+});
+
 test("Redline entry is factual and scan-friendly", () => {
   assert.match(html, /<h2[^>]*>Redline<\/h2>/);
   assert.match(html, /Maintained/);
