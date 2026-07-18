@@ -1,14 +1,43 @@
-const PORT = 7878;
+importScripts('auth.js');
+
+const PORT = globalThis.REDLINE_CONFIG.port;
 const BASE = `http://127.0.0.1:${PORT}`;
+const REDLINE_AUTH_HEADERS = { 'x-redline-token': globalThis.REDLINE_CONFIG.token };
+
+function sidecarFetch(url, options = {}) {
+  return fetch(url, {
+    ...options,
+    headers: { ...REDLINE_AUTH_HEADERS, ...(options.headers || {}) },
+  });
+}
 
 const screenshotByTab = new Map();
+const SCREENSHOT_TIMEOUT_MS = 2000;
+
+async function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function captureScreenshotForTab(tabId) {
   const tab = await chrome.tabs.get(tabId);
   const cached = screenshotByTab.get(tabId);
   if (cached && cached.url === tab.url) return cached.screenshot_id;
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-  const resp = await fetch(`${BASE}/screenshots`, {
+  const dataUrl = await withTimeout(
+    chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' }),
+    SCREENSHOT_TIMEOUT_MS,
+    'screenshot capture timed out'
+  );
+  const resp = await sidecarFetch(`${BASE}/screenshots`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ data_url: dataUrl }),
@@ -38,7 +67,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
         const payload = { ...msg.payload, screenshot_id };
-        const resp = await fetch(`${BASE}/redlines`, {
+        const resp = await sidecarFetch(`${BASE}/redlines`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(payload),
@@ -50,7 +79,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       if (msg.type === 'update-redline') {
-        const resp = await fetch(`${BASE}/redlines/${msg.id}`, {
+        const resp = await sidecarFetch(`${BASE}/redlines/${msg.id}`, {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(msg.payload),
@@ -62,7 +91,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       if (msg.type === 'delete-redline') {
-        const resp = await fetch(`${BASE}/redlines/${msg.id}`, { method: 'DELETE' });
+        const resp = await sidecarFetch(`${BASE}/redlines/${msg.id}`, { method: 'DELETE' });
         if (!resp.ok && resp.status !== 204) throw new Error(`DELETE /redlines ${resp.status}`);
         sendResponse({ ok: true });
         return;
@@ -74,7 +103,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (msg.origin) params.set('origin', msg.origin);
         if (msg.project) params.set('project', msg.project);
         const qs = params.toString();
-        const resp = await fetch(`${BASE}/redlines${qs ? `?${qs}` : ''}`);
+        const resp = await sidecarFetch(`${BASE}/redlines${qs ? `?${qs}` : ''}`);
         if (!resp.ok) throw new Error(`GET /redlines ${resp.status}`);
         sendResponse({ ok: true, items: await resp.json() });
         return;

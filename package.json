@@ -21,10 +21,11 @@
     "docs/assets/"
   ],
   "scripts": {
-    "check:syntax": "node -c plugins/redline/server.js && node -c .claude-plugins/redline/server.js && node -c setup/redline-agent-setup.js && node -c setup/redline.js && node -c extension/background.js && node -c extension/content.js && node -c extension/popup.js",
+    "check:syntax": "node -c plugins/redline/server.js && node -c .claude-plugins/redline/server.js && node -c setup/redline-agent-setup.js && node -c setup/redline.js && node -c setup/sync-versions.js && node -c extension/auth.js && node -c extension/background.js && node -c extension/content.js && node -c extension/popup.js",
+    "check:versions": "node setup/sync-versions.js --check",
     "test": "node --test tests/*.test.js",
     "release": "npx changeset publish",
-    "version": "npx changeset version"
+    "version": "npx changeset version && node setup/sync-versions.js"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.8"

@@ -9,6 +9,7 @@ const PORT = parseInt(process.env.REDLINE_PORT || '7878', 10);
 const ROOT = process.env.REDLINE_DIR || path.join(os.homedir(), '.redline');
 const DB = path.join(ROOT, 'redlines.json');
 const SHOTS = path.join(ROOT, 'screenshots');
+const AUTH_TOKEN_FILE = path.join(ROOT, 'auth-token');
 
 fs.mkdirSync(SHOTS, { recursive: true });
 if (!fs.existsSync(DB)) fs.writeFileSync(DB, '[]');
@@ -58,13 +59,30 @@ function isAllowedOrigin(origin) {
   return !origin || /^chrome-extension:\/\/[a-z0-9]{8,}$/i.test(origin);
 }
 
+function extensionRequestIsAuthorized(req) {
+  const origin = requestOrigin(req);
+  if (!origin || req.method === 'OPTIONS') return true;
+  let expected;
+  try {
+    expected = fs.readFileSync(AUTH_TOKEN_FILE, 'utf8').trim();
+  } catch {
+    return false;
+  }
+  const provided = req.headers['x-redline-token'];
+  if (typeof provided !== 'string' || !expected) return false;
+  const expectedBuffer = Buffer.from(expected);
+  const providedBuffer = Buffer.from(provided);
+  return expectedBuffer.length === providedBuffer.length &&
+    crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+}
+
 function corsHeaders(req, headers = {}) {
   const origin = requestOrigin(req);
   if (!origin) return headers;
   return {
     'access-control-allow-origin': origin,
     'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type, x-redline-token',
     vary: 'Origin',
     ...headers,
   };
@@ -90,6 +108,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'OPTIONS') return send(req, res, 204, '');
+
+  if (route !== 'GET /health' && !extensionRequestIsAuthorized(req)) {
+    return send(req, res, 401, { error: 'missing or invalid Redline capability token' });
+  }
 
   try {
     if (route === 'GET /health') {

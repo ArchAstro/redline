@@ -1,7 +1,23 @@
-const PORT = 7878;
+const PORT = globalThis.REDLINE_CONFIG.port;
 const BASE = `http://127.0.0.1:${PORT}`;
+const REDLINE_AUTH_HEADERS = { 'x-redline-token': globalThis.REDLINE_CONFIG.token };
 let filter = 'pending';
 let allItems = [];
+
+function sidecarFetch(url, options = {}) {
+  return fetch(url, {
+    ...options,
+    headers: { ...REDLINE_AUTH_HEADERS, ...(options.headers || {}) },
+  });
+}
+
+async function openScreenshot(screenshotId) {
+  const response = await sidecarFetch(`${BASE}/screenshots/${screenshotId}`);
+  if (!response.ok) throw new Error(`screenshot ${response.status}`);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  await chrome.tabs.create({ url: objectUrl });
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -41,7 +57,7 @@ function renderItems(origin) {
         <span>·</span>
         <span class="ts"></span>
         ${it.project ? `<span>·</span><span class="project"></span>` : ''}
-        ${it.screenshot_id ? `<span>·</span><a href="${BASE}/screenshots/${it.screenshot_id}" target="_blank">screenshot</a>` : ''}
+        ${it.screenshot_id ? '<span>·</span><a href="#" class="screenshot">screenshot</a>' : ''}
         <span style="flex:1"></span>
         <button class="btn secondary del">delete</button>
       </div>
@@ -50,8 +66,12 @@ function renderItems(origin) {
     el.querySelector('.cm').textContent = it.comment || '';
     el.querySelector('.ts').textContent = new Date(it.created_at).toLocaleString();
     if (it.project) el.querySelector('.project').textContent = it.project;
+    el.querySelector('.screenshot')?.addEventListener('click', async (event) => {
+      event.preventDefault();
+      await openScreenshot(it.screenshot_id);
+    });
     el.querySelector('.del').addEventListener('click', async () => {
-      await fetch(`${BASE}/redlines/${it.id}`, { method: 'DELETE' });
+      await sidecarFetch(`${BASE}/redlines/${it.id}`, { method: 'DELETE' });
       allItems = allItems.filter((item) => item.id !== it.id);
       renderItems(origin);
     });
@@ -84,7 +104,7 @@ async function init() {
   }
 
   allItems = origin
-    ? await fetch(`${BASE}/redlines?origin=${encodeURIComponent(origin)}`).then((r) => r.json())
+    ? await sidecarFetch(`${BASE}/redlines?origin=${encodeURIComponent(origin)}`).then((r) => r.json())
     : [];
   allItems.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   renderItems(origin);

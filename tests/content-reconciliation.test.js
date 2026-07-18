@@ -25,3 +25,9 @@ test('content script handles missing extension storage without crashing', () => 
   assert.match(content, /async function setLocal\(/);
   assert.doesNotMatch(content, /chrome\.storage\.local/);
 });
+
+test('content script explains that an invalidated extension requires a page refresh', () => {
+  assert.match(content, /function submissionErrorMessage\(/);
+  assert.match(content, /Redline updated\. Refresh this page and try again\./);
+  assert.match(content, /Extension context invalidated/i);
+});

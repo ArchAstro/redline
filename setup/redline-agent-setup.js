@@ -11,6 +11,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 const os = require('os');
 const http = require('http');
+const crypto = require('crypto');
 
 const MARKETPLACE = 'redline';
 const PLUGIN = 'redline';
@@ -184,14 +185,17 @@ async function copyTree(src, dst, dryRun, transforms = {}) {
     if (transforms[rel]) {
       srcBuf = Buffer.from(transforms[rel](srcBuf.toString('utf8')), 'utf8');
     }
-    const dstBuf = (await exists(target)) ? await fsp.readFile(target) : null;
-    if (!dstBuf || !srcBuf.equals(dstBuf)) {
+    const sourceMode = (await fsp.stat(file)).mode & 0o777;
+    const targetExists = await exists(target);
+    const dstBuf = targetExists ? await fsp.readFile(target) : null;
+    const contentChanged = !dstBuf || !srcBuf.equals(dstBuf);
+    const modeChanged = !targetExists || ((await fsp.stat(target)).mode & 0o777) !== sourceMode;
+    if (contentChanged || modeChanged) {
       changed = true;
       if (!dryRun) {
         await fsp.mkdir(path.dirname(target), { recursive: true });
-        await fsp.writeFile(target, srcBuf);
-        const mode = (await fsp.stat(file)).mode;
-        await fsp.chmod(target, mode);
+        if (contentChanged) await fsp.writeFile(target, srcBuf);
+        if (modeChanged) await fsp.chmod(target, sourceMode);
       }
     }
   }
@@ -390,6 +394,10 @@ function tomlString(v) { return JSON.stringify(v); }
 async function installCodex(sourceRoot, dryRun) {
   const pluginRoot = resolvePluginRoot('codex', sourceRoot);
   if (!(await exists(pluginRoot))) throw new Error(`Codex plugin source missing at ${pluginRoot}`);
+  const canonicalServerPath = path.join(resolvePluginRoot('claude', sourceRoot), 'server.js');
+  if (!(await exists(canonicalServerPath))) throw new Error(`Canonical server source missing at ${canonicalServerPath}`);
+  const canonicalServer = await fsp.readFile(canonicalServerPath, 'utf8');
+  const installTransforms = { 'server.js': () => canonicalServer };
   const version = await readVersion('codex', pluginRoot);
   const home = os.homedir();
   const codexRoot = path.join(home, '.codex');
@@ -414,8 +422,8 @@ async function installCodex(sourceRoot, dryRun) {
   };
 
   const pruned = await pruneOtherVersions(versionedRoot, version, dryRun);
-  const cacheChanged = await copyTree(pluginRoot, cacheRoot, dryRun);
-  const marketplaceFilesChanged = await copyTree(pluginRoot, marketplacePluginRoot, dryRun);
+  const cacheChanged = await copyTree(pluginRoot, cacheRoot, dryRun, installTransforms);
+  const marketplaceFilesChanged = await copyTree(pluginRoot, marketplacePluginRoot, dryRun, installTransforms);
   const marketplaceChanged = await writeFileIfChanged(marketplacePath, JSON.stringify(marketplace, null, 2) + '\n', dryRun);
 
   let configContent = (await exists(configPath)) ? await fsp.readFile(configPath, 'utf8') : '';
@@ -472,8 +480,57 @@ function redlineRoot() {
   return path.join(os.homedir(), '.redline');
 }
 
+function redlineDataRoot() {
+  return process.env.REDLINE_DIR ? path.resolve(process.env.REDLINE_DIR) : redlineRoot();
+}
+
+function redlinePort() {
+  const port = Number.parseInt(process.env.REDLINE_PORT || '7878', 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('REDLINE_PORT must be an integer between 1 and 65535');
+  }
+  return port;
+}
+
 function configPath() {
   return path.join(redlineRoot(), 'config.json');
+}
+
+function authTokenPath() {
+  return path.join(redlineDataRoot(), 'auth-token');
+}
+
+async function readAuthToken() {
+  try {
+    const token = (await fsp.readFile(authTokenPath(), 'utf8')).trim();
+    return token.length >= 43 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureAuthToken(dryRun) {
+  const existing = await readAuthToken();
+  if (existing) {
+    if (!dryRun) await fsp.chmod(authTokenPath(), 0o600);
+    return existing;
+  }
+  const token = crypto.randomBytes(32).toString('base64url');
+  if (!dryRun) {
+    await fsp.mkdir(redlineDataRoot(), { recursive: true });
+    await fsp.writeFile(authTokenPath(), token + '\n', { mode: 0o600 });
+    await fsp.chmod(authTokenPath(), 0o600);
+  }
+  return token;
+}
+
+function patchExtensionAuth(raw, token, port) {
+  if (!raw.includes('__REDLINE_AUTH_TOKEN__') || !raw.includes('__REDLINE_PORT__')) {
+    throw new Error('extension auth template is missing a runtime configuration placeholder');
+  }
+  return raw
+    .replace('__REDLINE_AUTH_TOKEN__', token)
+    .replace('__REDLINE_PORT__', String(port));
 }
 
 async function readRedlineConfig() {
@@ -526,8 +583,11 @@ async function syncExtension(sourceRoot, dryRun, mode) {
   const extSrc = path.join(sourceRoot, 'extension');
   const extDst = path.join(redlineRoot(), 'extension');
   if (!(await exists(extSrc))) return { harness: 'extension', changed: false, paths: {} };
+  const authToken = await ensureAuthToken(dryRun);
+  const port = redlinePort();
   const filesChanged = await copyTree(extSrc, extDst, dryRun, {
     'manifest.json': (raw) => patchExtensionManifestForMode(raw, mode),
+    'auth.js': (raw) => patchExtensionAuth(raw, authToken, port),
   });
   const configChanged = await writeExtensionMode(mode, dryRun);
   return { harness: 'extension', changed: filesChanged || configChanged, paths: { extensionRoot: extDst } };
@@ -595,6 +655,15 @@ async function extensionStatus(sourceRoot) {
     if (manifest) {
       const installedVersion = manifest.version || '(missing)';
       const mode = detectScreenshotMode(manifest);
+      const authToken = await readAuthToken();
+      const port = redlinePort();
+      const extSrc = path.join(sourceRoot, 'extension');
+      const filesOutOfSync = !authToken || (await exists(extSrc)
+        ? await copyTree(extSrc, extDst, true, {
+            'manifest.json': (raw) => patchExtensionManifestForMode(raw, mode),
+            'auth.js': (raw) => patchExtensionAuth(raw, authToken, port),
+          })
+        : false);
       log(`  installed: ${installedVersion}`);
       log(`  package: ${packageVersion || '(unknown)'}`);
       log(`  mode: ${extensionModeLabel(mode)}`);
@@ -603,7 +672,7 @@ async function extensionStatus(sourceRoot) {
       } else {
         log(`  ${color('yellow', 'screenshots:')} limited; enable full visual redlines with ${color('bold', 'redline setup --with-screenshots')}`);
       }
-      if (packageVersion && installedVersion !== packageVersion) {
+      if ((packageVersion && installedVersion !== packageVersion) || filesOutOfSync) {
         ok = false;
         log(`  ${color('yellow', 'out of sync:')} run ${color('bold', 'redline setup')}, then reload Redline in Chrome`);
       } else {
