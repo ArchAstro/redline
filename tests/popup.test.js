@@ -24,3 +24,8 @@ test('popup loads injected auth before making sidecar requests', () => {
   assert.match(js, /REDLINE_AUTH_HEADERS/);
   assert.match(js, /x-redline-token/);
 });
+
+test('popup identifies a 401 as a stale loaded extension', () => {
+  assert.match(js, /response\.status === 401/);
+  assert.match(js, /Reload Redline in chrome:\/\/extensions/i);
+});
