@@ -11,6 +11,13 @@ function sidecarFetch(url, options = {}) {
   });
 }
 
+function sidecarError(response, operation) {
+  if (response.status === 401) {
+    return new Error('Redline authentication changed. Reload Redline in chrome://extensions, then refresh this page.');
+  }
+  return new Error(`${operation} ${response.status}`);
+}
+
 const screenshotByTab = new Map();
 const SCREENSHOT_TIMEOUT_MS = 2000;
 
@@ -42,7 +49,7 @@ async function captureScreenshotForTab(tabId) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ data_url: dataUrl }),
   });
-  if (!resp.ok) throw new Error(`screenshot upload ${resp.status}`);
+  if (!resp.ok) throw sidecarError(resp, 'screenshot upload');
   const json = await resp.json();
   screenshotByTab.set(tabId, { url: tab.url, screenshot_id: json.id });
   return json.id;
@@ -72,7 +79,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        if (!resp.ok) throw new Error(`POST /redlines ${resp.status}`);
+        if (!resp.ok) throw sidecarError(resp, 'POST /redlines');
         const item = await resp.json();
         sendResponse({ ok: true, item });
         return;
@@ -84,7 +91,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(msg.payload),
         });
-        if (!resp.ok) throw new Error(`PATCH /redlines/${msg.id} ${resp.status}`);
+        if (!resp.ok) throw sidecarError(resp, `PATCH /redlines/${msg.id}`);
         const item = await resp.json();
         sendResponse({ ok: true, item });
         return;
@@ -92,7 +99,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       if (msg.type === 'delete-redline') {
         const resp = await sidecarFetch(`${BASE}/redlines/${msg.id}`, { method: 'DELETE' });
-        if (!resp.ok && resp.status !== 204) throw new Error(`DELETE /redlines ${resp.status}`);
+        if (!resp.ok && resp.status !== 204) throw sidecarError(resp, 'DELETE /redlines');
         sendResponse({ ok: true });
         return;
       }
@@ -104,7 +111,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (msg.project) params.set('project', msg.project);
         const qs = params.toString();
         const resp = await sidecarFetch(`${BASE}/redlines${qs ? `?${qs}` : ''}`);
-        if (!resp.ok) throw new Error(`GET /redlines ${resp.status}`);
+        if (!resp.ok) throw sidecarError(resp, 'GET /redlines');
         sendResponse({ ok: true, items: await resp.json() });
         return;
       }

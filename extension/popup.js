@@ -11,6 +11,15 @@ function sidecarFetch(url, options = {}) {
   });
 }
 
+async function readSidecarItems(url) {
+  const response = await sidecarFetch(url);
+  if (response.status === 401) {
+    throw new Error('Reload Redline in chrome://extensions, then refresh this page.');
+  }
+  if (!response.ok) throw new Error(`Unable to load redlines (${response.status}).`);
+  return response.json();
+}
+
 async function openScreenshot(screenshotId) {
   const response = await sidecarFetch(`${BASE}/screenshots/${screenshotId}`);
   if (!response.ok) throw new Error(`screenshot ${response.status}`);
@@ -103,9 +112,15 @@ async function init() {
     return;
   }
 
-  allItems = origin
-    ? await sidecarFetch(`${BASE}/redlines?origin=${encodeURIComponent(origin)}`).then((r) => r.json())
-    : [];
+  try {
+    allItems = origin
+      ? await readSidecarItems(`${BASE}/redlines?origin=${encodeURIComponent(origin)}`)
+      : [];
+  } catch (error) {
+    document.getElementById('counts').textContent = '';
+    list.textContent = error.message;
+    return;
+  }
   allItems.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   renderItems(origin);
 }

@@ -15,6 +15,42 @@ test("extension sidecar requests carry the injected capability token", () => {
   assert.match(backgroundSource, /headers:\s*\{[^}]*\.\.\.REDLINE_AUTH_HEADERS/s);
 });
 
+test("a sidecar 401 explains how to refresh the stale extension context", async () => {
+  let messageHandler;
+  const context = {
+    URLSearchParams,
+    console,
+    setTimeout,
+    clearTimeout,
+    importScripts() {
+      context.REDLINE_CONFIG = { token: "stale-capability-token", port: 7878 };
+    },
+    fetch: async () => ({ ok: false, status: 401 }),
+    chrome: {
+      tabs: {
+        onUpdated: { addListener() {} },
+        onRemoved: { addListener() {} },
+      },
+      runtime: {
+        onMessage: {
+          addListener(handler) {
+            messageHandler = handler;
+          },
+        },
+      },
+    },
+  };
+  vm.runInNewContext(backgroundSource, context);
+
+  const response = await new Promise((resolve) => {
+    messageHandler({ type: "list-redlines" }, {}, resolve);
+  });
+
+  assert.equal(response.ok, false);
+  assert.match(response.error, /Reload Redline in chrome:\/\/extensions/i);
+  assert.match(response.error, /refresh this page/i);
+});
+
 test("a stalled screenshot capture cannot block redline submission", async () => {
   let messageHandler;
   const requests = [];
