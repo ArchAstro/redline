@@ -1,5 +1,12 @@
 # @archastro/redline
 
+## 0.2.4
+
+### Patch Changes
+
+- be3bbd2: Publish the corrected Apache-2.0 license metadata in the npm package.
+- 9d266cd: Harden local sidecar authentication and private data storage, clean up screenshots with their redlines, preserve existing harness configuration during idempotent setup, reconcile stale page highlights, improve extension diagnostics and deletion errors, add an explicit screenshot-enabled install mode, and prepare public Apache-2.0 npm packaging.
+
 ## 0.2.3
 
 ### Patch Changes

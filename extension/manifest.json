@@ -1,9 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Redline",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Highlight web UI, leave redlines, and pipe them to Claude Code or Codex.",
-  "permissions": ["activeTab", "storage"],
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*"
@@ -21,8 +24,12 @@
         "http://*.localhost/*",
         "https://*.localhost/*"
       ],
-      "js": ["content.js"],
-      "css": ["content.css"],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle"
     }
   ],

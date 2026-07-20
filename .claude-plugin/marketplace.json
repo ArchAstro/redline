@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Bridge the Redline Chrome extension to Claude Code via a local HTTP sidecar.",
-    "version": "0.2.3",
+    "version": "0.2.4",
     "pluginRoot": ".claude-plugins"
   },
   "plugins": [
@@ -13,9 +13,13 @@
       "name": "redline",
       "source": "./.claude-plugins/redline",
       "description": "Pull and act on UI redlines captured by the Redline Chrome extension.",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "category": "development",
-      "tags": ["redline", "ui-review", "chrome-extension"]
+      "tags": [
+        "redline",
+        "ui-review",
+        "chrome-extension"
+      ]
     }
   ]
 }
