@@ -114,7 +114,7 @@
       </div>
       <div class="rl-selected"></div>
       <textarea class="rl-comment" placeholder="What's wrong / what should this say?"></textarea>
-      <input class="rl-project" placeholder="optional project tag (e.g. firstlanding)" />
+      <input class="rl-project" placeholder="optional project tag (e.g. my-app)" />
       <div class="rl-actions">
         ${existing ? '<button class="rl-delete">Delete</button>' : ''}
         <span class="rl-status"></span>
@@ -319,6 +319,10 @@
   async function reconcileHighlights() {
     const key = localKey();
     const data = (await getLocal([key]))[key] || [];
+    if (!data.length) {
+      for (const id of STATE.highlights.keys()) removeHighlight(id);
+      return;
+    }
     let pendingIds = null;
     try {
       pendingIds = await pendingServerIdsForPage();

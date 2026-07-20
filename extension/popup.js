@@ -67,6 +67,7 @@ function renderItems(origin) {
         <span class="ts"></span>
         ${it.project ? `<span>·</span><span class="project"></span>` : ''}
         ${it.screenshot_id ? '<span>·</span><a href="#" class="screenshot">screenshot</a>' : ''}
+        <span class="delete-status" role="status"></span>
         <span style="flex:1"></span>
         <button class="btn secondary del">delete</button>
       </div>
@@ -79,10 +80,23 @@ function renderItems(origin) {
       event.preventDefault();
       await openScreenshot(it.screenshot_id);
     });
-    el.querySelector('.del').addEventListener('click', async () => {
-      await sidecarFetch(`${BASE}/redlines/${it.id}`, { method: 'DELETE' });
-      allItems = allItems.filter((item) => item.id !== it.id);
-      renderItems(origin);
+    const deleteButton = el.querySelector('.del');
+    const deleteStatus = el.querySelector('.delete-status');
+    deleteButton.addEventListener('click', async () => {
+      deleteButton.disabled = true;
+      deleteStatus.textContent = 'deleting...';
+      try {
+        const response = await sidecarFetch(`${BASE}/redlines/${it.id}`, { method: 'DELETE' });
+        if (response.status === 401) {
+          throw new Error('Reload Redline in chrome://extensions, then refresh this page.');
+        }
+        if (!response.ok) throw new Error(`Could not delete redline (${response.status}).`);
+        allItems = allItems.filter((item) => item.id !== it.id);
+        renderItems(origin);
+      } catch (error) {
+        deleteButton.disabled = false;
+        deleteStatus.textContent = error.message;
+      }
     });
     list.appendChild(el);
   }

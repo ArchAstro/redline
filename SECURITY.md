@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-Please report suspected vulnerabilities privately by emailing security@archastro.com. Include:
+Please report suspected vulnerabilities privately by emailing security@archastro.ai. Include:
 
 - the affected Redline version or commit
 - the operating system and browser

@@ -4,7 +4,7 @@
 # Usage:
 #   redline-pull                       # all pending, all origins
 #   redline-pull https://example.com   # filter by origin
-#   redline-pull --project firstlanding
+#   redline-pull --project my-app
 #   redline-pull --no-ack              # peek without consuming
 set -e
 

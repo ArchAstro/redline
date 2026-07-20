@@ -47,11 +47,12 @@ function request(port, method, pathname, { origin, token, body } = {}) {
   });
 }
 
-async function startSidecar(t) {
+async function startSidecar(t, prepare) {
   const port = await freePort();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-test-'));
   const authToken = 'test-capability-token-with-at-least-32-bytes';
   fs.writeFileSync(path.join(dir, 'auth-token'), authToken, { mode: 0o600 });
+  if (prepare) prepare(dir);
   const child = spawn(process.execPath, ['plugins/redline/server.js'], {
     cwd: path.resolve(__dirname, '..'),
     env: { ...process.env, REDLINE_PORT: String(port), REDLINE_DIR: dir },
@@ -89,6 +90,23 @@ test('Codex sidecar entry point delegates to the canonical server', () => {
 
   assert.match(entryPoint, /require\(['"]\.\.\/\.\.\/\.claude-plugins\/redline\/server\.js['"]\)/);
   assert.doesNotMatch(entryPoint, /createServer|function readDB|function writeDB/);
+});
+
+test('sidecar repairs private modes for its data store', async (t) => {
+  const { dir } = await startSidecar(t, (dataDir) => {
+    const shots = path.join(dataDir, 'screenshots');
+    fs.mkdirSync(shots, { mode: 0o755 });
+    fs.writeFileSync(path.join(dataDir, 'redlines.json'), '[]', { mode: 0o666 });
+    fs.writeFileSync(path.join(shots, 'ss_existing.png'), 'png', { mode: 0o666 });
+    fs.chmodSync(path.join(dataDir, 'auth-token'), 0o644);
+    fs.chmodSync(dataDir, 0o755);
+  });
+
+  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(path.join(dir, 'screenshots')).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(path.join(dir, 'redlines.json')).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.join(dir, 'auth-token')).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.join(dir, 'screenshots', 'ss_existing.png')).mode & 0o777, 0o600);
 });
 
 test('sidecar rejects browser requests from arbitrary website origins', async (t) => {
@@ -154,4 +172,43 @@ test('sidecar updates an existing redline without changing its id', async (t) =>
   const list = await request(port, 'GET', '/redlines?status=pending');
   assert.equal(list.json.length, 1);
   assert.equal(list.json[0].comment, 'Use Publish');
+});
+
+test('deleting the last redline for a screenshot deletes the screenshot', async (t) => {
+  const { port, dir } = await startSidecar(t);
+  const uploaded = await request(port, 'POST', '/screenshots', {
+    body: { data_url: `data:image/png;base64,${Buffer.from('png').toString('base64')}` },
+  });
+  assert.equal(uploaded.status, 201);
+  const shot = path.join(dir, 'screenshots', `${uploaded.json.id}.png`);
+  assert.equal(fs.statSync(shot).mode & 0o777, 0o600);
+
+  const first = await request(port, 'POST', '/redlines', { body: { screenshot_id: uploaded.json.id } });
+  const second = await request(port, 'POST', '/redlines', { body: { screenshot_id: uploaded.json.id } });
+  assert.equal((await request(port, 'DELETE', `/redlines/${first.json.id}`)).status, 204);
+  assert.equal(fs.existsSync(shot), true);
+
+  assert.equal((await request(port, 'DELETE', `/redlines/${second.json.id}`)).status, 204);
+  assert.equal(fs.existsSync(shot), false);
+});
+
+test('redline deletion never treats an arbitrary screenshot id as a file path', async (t) => {
+  const { port, dir } = await startSidecar(t);
+  const outside = path.join(dir, 'keep.png');
+  fs.writeFileSync(outside, 'keep');
+  const created = await request(port, 'POST', '/redlines', {
+    body: { screenshot_id: '../keep' },
+  });
+
+  assert.equal((await request(port, 'DELETE', `/redlines/${created.json.id}`)).status, 204);
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'keep');
+});
+
+test('retrying deletion cleans up screenshots orphaned by an earlier cleanup failure', async (t) => {
+  const { port, dir } = await startSidecar(t);
+  const orphan = path.join(dir, 'screenshots', 'ss_orphan.png');
+  fs.writeFileSync(orphan, 'png');
+
+  assert.equal((await request(port, 'DELETE', '/redlines/already-deleted')).status, 204);
+  assert.equal(fs.existsSync(orphan), false);
 });

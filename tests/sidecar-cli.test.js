@@ -44,3 +44,25 @@ test('redline-sidecar start detaches the daemon into its own process group', asy
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('redline-sidecar stop ignores a stale pid owned by another process', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-sidecar-stale-pid-'));
+  const dir = path.join(home, '.redline');
+  const port = await freePort();
+  const env = { ...process.env, HOME: home, REDLINE_DIR: dir, REDLINE_PORT: String(port) };
+  const sleeper = require('node:child_process').spawn('sleep', ['30']);
+
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'sidecar.pid'), `${sleeper.pid}\n`);
+    const stopped = spawnSync(SIDECAR, ['stop'], { cwd: ROOT, env, encoding: 'utf8' });
+
+    assert.equal(stopped.status, 1);
+    assert.match(stopped.stdout, /ignored stale pid file/);
+    assert.equal(fs.existsSync(path.join(dir, 'sidecar.pid')), false);
+    assert.equal(sleeper.exitCode, null);
+  } finally {
+    sleeper.kill();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

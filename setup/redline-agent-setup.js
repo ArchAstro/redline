@@ -12,6 +12,7 @@ const path = require('path');
 const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 
 const MARKETPLACE = 'redline';
 const PLUGIN = 'redline';
@@ -119,6 +120,13 @@ function resolvePackageRoot() {
   return path.resolve(__dirname, '..');
 }
 
+function missingRequiredCommands() {
+  return ['bash', 'curl', 'jq'].filter((command) => {
+    const result = spawnSync(command, ['--version'], { stdio: 'ignore' });
+    return result.error || result.status !== 0;
+  });
+}
+
 function resolvePluginRoot(harness, sourceRoot) {
   if (harness === 'claude') return path.join(sourceRoot, '.claude-plugins', PLUGIN);
   if (harness === 'codex') return path.join(sourceRoot, 'plugins', PLUGIN);
@@ -145,8 +153,13 @@ async function exists(p) {
 }
 
 async function readJsonOrNull(p) {
-  if (!(await exists(p))) return null;
-  try { return JSON.parse(await fsp.readFile(p, 'utf8')); } catch { return null; }
+  try {
+    return JSON.parse(await fsp.readFile(p, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error instanceof SyntaxError) throw new Error(`invalid JSON in ${p}: ${error.message}`);
+    throw error;
+  }
 }
 
 async function writeFileIfChanged(p, content, dryRun) {
@@ -154,7 +167,20 @@ async function writeFileIfChanged(p, content, dryRun) {
   if (existing === content) return false;
   if (!dryRun) {
     await fsp.mkdir(path.dirname(p), { recursive: true });
-    await fsp.writeFile(p, content);
+    const mode = existing === null ? 0o600 : (await fsp.stat(p)).mode & 0o777;
+    const tmp = `${p}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+    let handle;
+    try {
+      handle = await fsp.open(tmp, 'wx', mode);
+      await handle.writeFile(content);
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await fsp.rename(tmp, p);
+    } finally {
+      if (handle) await handle.close().catch(() => {});
+      await fsp.rm(tmp, { force: true }).catch(() => {});
+    }
   }
   return true;
 }
@@ -173,7 +199,7 @@ async function walk(root) {
   return out;
 }
 
-async function copyTree(src, dst, dryRun, transforms = {}) {
+async function copyTree(src, dst, dryRun, transforms = {}, modeOverrides = {}) {
   let changed = false;
   const wanted = new Set();
   const files = await walk(src);
@@ -185,7 +211,7 @@ async function copyTree(src, dst, dryRun, transforms = {}) {
     if (transforms[rel]) {
       srcBuf = Buffer.from(transforms[rel](srcBuf.toString('utf8')), 'utf8');
     }
-    const sourceMode = (await fsp.stat(file)).mode & 0o777;
+    const sourceMode = modeOverrides[rel] ?? ((await fsp.stat(file)).mode & 0o777);
     const targetExists = await exists(target);
     const dstBuf = targetExists ? await fsp.readFile(target) : null;
     const contentChanged = !dstBuf || !srcBuf.equals(dstBuf);
@@ -240,6 +266,11 @@ async function installClaude(sourceRoot, dryRun) {
   const marketplaceManifestDest = path.join(marketplaceRoot, '.claude-plugin', 'marketplace.json');
   const marketplacePluginDest = path.join(marketplaceRoot, '.claude-plugins', PLUGIN);
   const knownMarketplacesPath = path.join(home, '.claude', 'plugins', 'known_marketplaces.json');
+  // Parse every shared JSON file before changing the filesystem. A malformed
+  // harness config must never produce a partial install or get overwritten.
+  const known = (await readJsonOrNull(knownMarketplacesPath)) || {};
+  const settings = (await readJsonOrNull(settingsPath)) || {};
+  const registry = (await readJsonOrNull(registryPath)) || {};
 
   const pruned = await pruneOtherVersions(versionedRoot, version, dryRun);
   const filesChanged = await copyTree(pluginRoot, installRoot, dryRun);
@@ -252,7 +283,6 @@ async function installClaude(sourceRoot, dryRun) {
   const marketplacePluginChanged = await copyTree(pluginRoot, marketplacePluginDest, dryRun);
 
   // known_marketplaces.json — register as a local marketplace pointing at the dir above.
-  const known = (await readJsonOrNull(knownMarketplacesPath)) || {};
   const now = new Date().toISOString();
   const prevEntry = known[MARKETPLACE];
   // Claude's schema renamed local-filesystem marketplaces from `local` → `directory`
@@ -273,7 +303,6 @@ async function installClaude(sourceRoot, dryRun) {
   const knownChanged = await writeFileIfChanged(knownMarketplacesPath, JSON.stringify(nextKnown, null, 2) + '\n', dryRun);
 
   // settings.json — set enabledPlugins["redline@redline"] = true
-  const settings = (await readJsonOrNull(settingsPath)) || {};
   const enabledPlugins = (settings.enabledPlugins && typeof settings.enabledPlugins === 'object' && !Array.isArray(settings.enabledPlugins))
     ? { ...settings.enabledPlugins } : {};
   enabledPlugins[PLUGIN_KEY] = true;
@@ -281,13 +310,20 @@ async function installClaude(sourceRoot, dryRun) {
   const settingsChanged = await writeFileIfChanged(settingsPath, JSON.stringify(nextSettings, null, 2) + '\n', dryRun);
 
   // installed_plugins.json — append or upsert the user-scope entry
-  const registry = (await readJsonOrNull(registryPath)) || {};
   const plugins = (registry.plugins && typeof registry.plugins === 'object' && !Array.isArray(registry.plugins))
     ? { ...registry.plugins } : {};
   const entries = Array.isArray(plugins[PLUGIN_KEY]) ? [...plugins[PLUGIN_KEY]] : [];
   const idx = entries.findIndex((e) => e && e.scope === 'user' && !e.projectPath);
-  const prevInstalledAt = idx >= 0 && typeof entries[idx].installedAt === 'string' ? entries[idx].installedAt : now;
-  const next = { scope: 'user', installPath: installRoot, version, installedAt: prevInstalledAt, lastUpdated: now };
+  const previous = idx >= 0 ? entries[idx] : null;
+  const prevInstalledAt = typeof previous?.installedAt === 'string' ? previous.installedAt : now;
+  const unchangedInstall = previous?.installPath === installRoot && previous?.version === version;
+  const next = {
+    scope: 'user',
+    installPath: installRoot,
+    version,
+    installedAt: prevInstalledAt,
+    lastUpdated: unchangedInstall && typeof previous.lastUpdated === 'string' ? previous.lastUpdated : now,
+  };
   if (idx >= 0) entries[idx] = next; else entries.push(next);
   const nextRegistry = {
     ...registry,
@@ -408,16 +444,22 @@ async function installCodex(sourceRoot, dryRun) {
   const marketplacePluginRoot = path.join(marketplaceRoot, 'plugins', PLUGIN);
   const marketplacePath = path.join(marketplaceRoot, 'marketplace.json');
 
+  const existingMarketplace = await readJsonOrNull(marketplacePath);
+  const redlineEntry = {
+    name: PLUGIN,
+    source: { source: 'local', path: `./plugins/${PLUGIN}` },
+    policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' },
+    category: 'Development',
+  };
   const marketplace = {
-    name: MARKETPLACE,
-    interface: { displayName: 'Redline' },
+    ...(existingMarketplace || {}),
+    name: existingMarketplace?.name || MARKETPLACE,
+    interface: existingMarketplace?.interface || { displayName: 'Redline' },
     plugins: [
-      {
-        name: PLUGIN,
-        source: { source: 'local', path: `./plugins/${PLUGIN}` },
-        policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' },
-        category: 'Development',
-      },
+      ...(Array.isArray(existingMarketplace?.plugins)
+        ? existingMarketplace.plugins.filter((plugin) => plugin?.name !== PLUGIN)
+        : []),
+      redlineEntry,
     ],
   };
 
@@ -512,12 +554,16 @@ async function readAuthToken() {
 async function ensureAuthToken(dryRun) {
   const existing = await readAuthToken();
   if (existing) {
-    if (!dryRun) await fsp.chmod(authTokenPath(), 0o600);
+    if (!dryRun) {
+      await fsp.chmod(redlineDataRoot(), 0o700);
+      await fsp.chmod(authTokenPath(), 0o600);
+    }
     return existing;
   }
   const token = crypto.randomBytes(32).toString('base64url');
   if (!dryRun) {
-    await fsp.mkdir(redlineDataRoot(), { recursive: true });
+    await fsp.mkdir(redlineDataRoot(), { recursive: true, mode: 0o700 });
+    await fsp.chmod(redlineDataRoot(), 0o700);
     await fsp.writeFile(authTokenPath(), token + '\n', { mode: 0o600 });
     await fsp.chmod(authTokenPath(), 0o600);
   }
@@ -582,14 +628,20 @@ function detectScreenshotMode(manifest) {
 async function syncExtension(sourceRoot, dryRun, mode) {
   const extSrc = path.join(sourceRoot, 'extension');
   const extDst = path.join(redlineRoot(), 'extension');
-  if (!(await exists(extSrc))) return { harness: 'extension', changed: false, paths: {} };
+  if (!(await exists(extSrc))) throw new Error(`Chrome extension source missing at ${extSrc}`);
   const authToken = await ensureAuthToken(dryRun);
   const port = redlinePort();
   const filesChanged = await copyTree(extSrc, extDst, dryRun, {
     'manifest.json': (raw) => patchExtensionManifestForMode(raw, mode),
     'auth.js': (raw) => patchExtensionAuth(raw, authToken, port),
-  });
+  }, { 'auth.js': 0o600 });
+  if (!dryRun) {
+    await fsp.chmod(redlineRoot(), 0o700);
+    await fsp.chmod(extDst, 0o700);
+    await fsp.chmod(path.join(extDst, 'auth.js'), 0o600);
+  }
   const configChanged = await writeExtensionMode(mode, dryRun);
+  if (!dryRun) await fsp.chmod(configPath(), 0o600);
   return { harness: 'extension', changed: filesChanged || configChanged, paths: { extensionRoot: extDst } };
 }
 
@@ -708,12 +760,25 @@ async function main() {
 
   const targets = opts.claudeOnly ? ['claude'] : opts.codexOnly ? ['codex'] : HARNESSES;
   const sourceRoot = opts.pluginSource ? path.resolve(opts.pluginSource) : resolvePackageRoot();
-  const extensionMode = await resolveExtensionMode(opts);
 
   if (opts.extensionStatus) {
     const ok = await extensionStatus(sourceRoot);
     process.exitCode = ok ? 0 : 1;
     return;
+  }
+
+  if (!opts.uninstall) {
+    const extensionSource = path.join(sourceRoot, 'extension');
+    if (!(await exists(extensionSource))) fail(`Chrome extension source missing at ${extensionSource}`);
+  }
+
+  const extensionMode = opts.uninstall ? null : await resolveExtensionMode(opts);
+
+  if (!opts.uninstall && !opts.dryRun) {
+    const missing = missingRequiredCommands();
+    if (missing.length) {
+      fail(`missing required commands: ${missing.join(', ')}. Redline supports macOS and Linux with Bash, curl, and jq installed.`);
+    }
   }
 
   log(color('bold', `Redline ${opts.uninstall ? 'uninstall' : 'install'}${opts.dryRun ? ' (dry run)' : ''}`));
@@ -722,6 +787,8 @@ async function main() {
     log(color('dim', `extension mode: ${extensionModeLabel(extensionMode)}`));
   }
   log('');
+
+  const failures = [];
 
   for (const h of targets) {
     try {
@@ -739,6 +806,7 @@ async function main() {
       }
     } catch (e) {
       warn(`${h}: ${e.message}`);
+      failures.push(h);
     }
   }
 
@@ -754,9 +822,15 @@ async function main() {
     }
   } catch (e) {
     warn(`extension: ${e.message}`);
+    failures.push('extension');
   }
 
   log('');
+  if (failures.length) {
+    warn(`${opts.uninstall ? 'uninstall' : 'installation'} failed for: ${failures.join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
   if (!opts.uninstall) {
     log(color('cyan', 'Next:'));
     log('  1. Reload your Claude / Codex session.');

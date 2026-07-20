@@ -13,6 +13,7 @@ Cloudflare Worker and D1 storage for anonymous lab votes and confirmed update su
 - Erased subscription identity rows are deleted after `ERASED_IDENTITY_RETENTION_DAYS`.
 - The outbox retries network errors, HTTP 429, and HTTP 5xx with bounded exponential backoff. Other HTTP 4xx responses and requests that reach `OUTBOX_MAX_ATTEMPTS` become terminal failures.
 - The scheduled Worker retries only queued mail whose `next_attempt_at` has arrived and performs retention maintenance every 15 minutes.
+- This Worker sends confirmation mail only. Any service that later sends product or ArchAstro updates must create signed `unsubscribe` and `erase` links with `createSignedToken` and include both links in every message. Do not deploy an update-mail sender without that lifecycle integration and an end-to-end test.
 
 ## Configure
 

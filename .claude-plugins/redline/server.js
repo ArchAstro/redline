@@ -11,8 +11,18 @@ const DB = path.join(ROOT, 'redlines.json');
 const SHOTS = path.join(ROOT, 'screenshots');
 const AUTH_TOKEN_FILE = path.join(ROOT, 'auth-token');
 
-fs.mkdirSync(SHOTS, { recursive: true });
-if (!fs.existsSync(DB)) fs.writeFileSync(DB, '[]');
+fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 });
+fs.chmodSync(ROOT, 0o700);
+fs.mkdirSync(SHOTS, { recursive: true, mode: 0o700 });
+fs.chmodSync(SHOTS, 0o700);
+if (!fs.existsSync(DB)) fs.writeFileSync(DB, '[]', { mode: 0o600 });
+fs.chmodSync(DB, 0o600);
+if (fs.existsSync(AUTH_TOKEN_FILE)) fs.chmodSync(AUTH_TOKEN_FILE, 0o600);
+for (const entry of fs.readdirSync(SHOTS, { withFileTypes: true })) {
+  if (entry.isFile() && entry.name.endsWith('.png')) {
+    fs.chmodSync(path.join(SHOTS, entry.name), 0o600);
+  }
+}
 
 function readDB() {
   try {
@@ -24,8 +34,17 @@ function readDB() {
 
 function writeDB(items) {
   const tmp = DB + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(items, null, 2));
+  fs.writeFileSync(tmp, JSON.stringify(items, null, 2), { mode: 0o600 });
   fs.renameSync(tmp, DB);
+  fs.chmodSync(DB, 0o600);
+}
+
+function removeOrphanedScreenshots(remainingItems) {
+  const referenced = new Set(remainingItems.map((item) => item.screenshot_id).filter(Boolean));
+  for (const entry of fs.readdirSync(SHOTS, { withFileTypes: true })) {
+    const match = entry.isFile() && entry.name.match(/^(ss_[a-z0-9]+)\.png$/);
+    if (match && !referenced.has(match[1])) fs.rmSync(path.join(SHOTS, entry.name));
+  }
 }
 
 function mkid(prefix) {
@@ -180,7 +199,10 @@ const server = http.createServer(async (req, res) => {
 
     const delMatch = url.pathname.match(/^\/redlines\/([^/]+)$/);
     if (req.method === 'DELETE' && delMatch) {
-      writeDB(readDB().filter((i) => i.id !== delMatch[1]));
+      const items = readDB();
+      const remaining = items.filter((item) => item.id !== delMatch[1]);
+      writeDB(remaining);
+      removeOrphanedScreenshots(remaining);
       return send(req, res, 204, '');
     }
 
@@ -190,7 +212,7 @@ const server = http.createServer(async (req, res) => {
       if (!m) return send(req, res, 400, { error: 'expected { data_url: "data:image/png;base64,..." }' });
       const buf = Buffer.from(m[1], 'base64');
       const id = mkid('ss');
-      fs.writeFileSync(path.join(SHOTS, id + '.png'), buf);
+      fs.writeFileSync(path.join(SHOTS, id + '.png'), buf, { mode: 0o600 });
       return send(req, res, 201, { id, bytes: buf.length });
     }
 
