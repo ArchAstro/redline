@@ -39,6 +39,10 @@ Claude Code / Codex plugin.
 
 ## Install
 
+Prerequisites: macOS or Linux, Node.js 18 or newer, Bash, curl, and jq, plus
+Chrome or another Chromium-based browser. Redline's command-line helpers do not
+currently support Windows.
+
 ### Recommended CLI install
 
 Install once, then use the single `redline` command for setup, status, and
@@ -108,7 +112,7 @@ workflow, the global CLI is smoother.
 
 **Claude Code:**
 ```
-/plugin marketplace add ~/archastro/redline
+/plugin marketplace add ~/path/to/redline
 /plugin install redline@redline
 ```
 
@@ -174,7 +178,7 @@ redline status
    ```bash
    redline pull                       # all pending, all origins, acks each
    redline pull https://localhost:5173 # filter by origin
-   redline pull --project firstlanding
+   redline pull --project my-app
    redline pull --no-ack              # peek without consuming
    ```
 
@@ -233,7 +237,7 @@ mid-pull, the items stay pending.
   "url": "http://localhost:5173/dashboard",
   "origin": "http://localhost:5173",
   "title": "Dashboard · MyApp",
-  "project": "firstlanding",
+  "project": "my-app",
   "selected_text": "Get started with your first agent",
   "comment": "should say 'Deploy your first agent'",
   "context": {

@@ -2,4 +2,4 @@
 "@archastro/redline": patch
 ---
 
-Harden the local sidecar against arbitrary browser origins, add in-place redline updates, reconcile stale page highlights on reload, add Chrome extension status diagnostics, add a friendly `redline` CLI with an explicit screenshot-enabled install mode, and prepare public Apache-2.0 npm packaging.
+Harden local sidecar authentication and private data storage, clean up screenshots with their redlines, preserve existing harness configuration during idempotent setup, reconcile stale page highlights, improve extension diagnostics and deletion errors, add an explicit screenshot-enabled install mode, and prepare public Apache-2.0 npm packaging.

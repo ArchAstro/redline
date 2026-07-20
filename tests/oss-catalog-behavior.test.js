@@ -314,7 +314,7 @@ test("email 202 reports confirmation pending without persisting email or consent
   assert.equal(payloads[1].project_updates, true);
   assert.equal(payloads[1].broader_updates, false);
   const saved = catalog.readLocalInterest(storage).astrodev;
-  assert.deepEqual(Object.keys(saved).sort(), ["confirmationPending", "deliveryStatus", "eventId", "interested", "updatedAt"]);
+  assert.deepEqual(Object.keys(saved).sort(), ["confirmationPending", "deliveryStatus", "eventId", "interested", "signupEventId", "updatedAt"]);
   assert.equal(saved.confirmationPending, true);
   assert.equal(saved.deliveryStatus, "pending-confirmation");
   assert.doesNotMatch(records.get("archastro-oss-interest"), /dev@example\.com|projectUpdates|broaderUpdates|"email"\s*:/);
@@ -441,7 +441,7 @@ test("queued email response reports delayed confirmation delivery", async () => 
   assert.equal(reloaded.note.textContent, elements.note.textContent);
 });
 
-test("terminal email failure rotates the event id so the browser can retry", async () => {
+test("terminal email failure rotates only the signup id and preserves vote retraction", async () => {
   const records = new Map();
   const storage = {
     getItem: (key) => records.get(key) || null,
@@ -451,6 +451,7 @@ test("terminal email failure rotates the event id so the browser can retry", asy
   addEmailControls(elements, "dev@example.com");
   const ids = ["evt-original", "evt-retry"];
   const signupEventIds = [];
+  const retractionEventIds = [];
   let signupAttempts = 0;
   catalog.bindInterestItem({
     item: "aster",
@@ -464,6 +465,10 @@ test("terminal email failure rotates the event id so the browser can retry", asy
     fetchImpl: async (_url, request) => {
       const payload = JSON.parse(request.body);
       if (payload.action === "thumbs_up") return { ok: true, status: 201 };
+      if (payload.action === "remove_interest") {
+        retractionEventIds.push(payload.event_id);
+        return { ok: true, status: 200 };
+      }
       signupEventIds.push(payload.event_id);
       signupAttempts += 1;
       return signupAttempts === 1
@@ -486,12 +491,17 @@ test("terminal email failure rotates the event id so the browser can retry", asy
 
   await elements.button.emit("click");
   await elements.form.emit("submit", { preventDefault() {} });
-  assert.equal(catalog.readLocalInterest(storage).aster.eventId, "evt-retry");
+  assert.equal(catalog.readLocalInterest(storage).aster.eventId, "evt-original");
+  assert.equal(catalog.readLocalInterest(storage).aster.signupEventId, "evt-retry");
   assert.equal(elements.note.dataset.state, "error");
 
   await elements.form.emit("submit", { preventDefault() {} });
   assert.deepEqual(signupEventIds, ["evt-original", "evt-retry"]);
   assert.equal(elements.note.dataset.state, "pending-confirmation");
+
+  await elements.button.emit("click");
+  assert.deepEqual(retractionEventIds, ["evt-original"]);
+  assert.equal(catalog.readLocalInterest(storage).aster.interested, false);
 });
 
 test("successful interest response returns its server status", async () => {
@@ -603,7 +613,7 @@ test("local preview never persists raw email or consent values", async () => {
 
   const raw = records.get("archastro-oss-interest");
   const saved = catalog.readLocalInterest(storage).aster;
-  assert.deepEqual(Object.keys(saved).sort(), ["confirmationPending", "deliveryStatus", "eventId", "interested", "updatedAt"]);
+  assert.deepEqual(Object.keys(saved).sort(), ["confirmationPending", "deliveryStatus", "eventId", "interested", "signupEventId", "updatedAt"]);
   assert.equal(saved.confirmationPending, true);
   assert.doesNotMatch(raw, /private@example\.com|projectUpdates|broaderUpdates|"email"\s*:/);
 });
@@ -634,6 +644,7 @@ test("reading legacy interest state purges previously stored personal data", () 
 
   assert.deepEqual(saved, {
     eventId: "evt-legacy",
+    signupEventId: "evt-legacy",
     interested: true,
     confirmationPending: true,
     deliveryStatus: "",

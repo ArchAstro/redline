@@ -46,6 +46,10 @@
   "engines": {
     "node": ">=18"
   },
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "license": "Apache-2.0",
   "author": "ArchAstro",
   "keywords": [

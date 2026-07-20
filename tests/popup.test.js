@@ -29,3 +29,14 @@ test('popup identifies a 401 as a stale loaded extension', () => {
   assert.match(js, /response\.status === 401/);
   assert.match(js, /Reload Redline in chrome:\/\/extensions/i);
 });
+
+test('popup preserves a redline and reports an error when deletion fails', () => {
+  const deleteRequest = js.indexOf("const response = await sidecarFetch(`${BASE}/redlines/${it.id}`");
+  const responseCheck = js.indexOf('if (!response.ok)', deleteRequest);
+  const localRemoval = js.indexOf('allItems = allItems.filter', deleteRequest);
+
+  assert.ok(deleteRequest >= 0);
+  assert.ok(responseCheck > deleteRequest);
+  assert.ok(localRemoval > responseCheck);
+  assert.match(js, /deleteStatus\.textContent = error\.message/);
+});

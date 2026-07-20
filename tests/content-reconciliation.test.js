@@ -13,6 +13,13 @@ test('content script reconciles visible highlights after ack and focus changes',
   assert.match(content, /document\.addEventListener\('visibilitychange'/);
 });
 
+test('content script does not poll the sidecar when the page has no local highlights', () => {
+  assert.match(
+    content,
+    /const data = \(await getLocal\(\[key\]\)\)\[key\] \|\| \[\];\s*if \(!data\.length\) \{[\s\S]*?return;[\s\S]*?\}\s*let pendingIds/s
+  );
+});
+
 test('content script removes stale highlights when page text changes', () => {
   assert.match(content, /function textStillMatches\(/);
   assert.match(content, /function pruneStaleHighlights\(/);

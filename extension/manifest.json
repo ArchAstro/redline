@@ -3,7 +3,7 @@
   "name": "Redline",
   "version": "0.2.3",
   "description": "Highlight web UI, leave redlines, and pipe them to Claude Code or Codex.",
-  "permissions": ["activeTab", "storage", "tabs"],
+  "permissions": ["activeTab", "storage"],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*"

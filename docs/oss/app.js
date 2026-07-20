@@ -26,6 +26,12 @@
         item,
         {
           eventId: typeof record?.eventId === "string" ? record.eventId : "",
+          signupEventId:
+            typeof record?.signupEventId === "string"
+              ? record.signupEventId
+              : typeof record?.eventId === "string"
+                ? record.eventId
+                : "",
           interested: !!record?.interested,
           confirmationPending: !!(
             record?.confirmationPending || record?.emailSubmitted || record?.email
@@ -59,6 +65,8 @@
     const saved = store[item] || {};
     store[item] = {
       eventId: payload.event_id || saved.eventId || "",
+      signupEventId:
+        payload.signup_event_id || saved.signupEventId || payload.event_id || saved.eventId || "",
       interested: payload.interested ?? saved.interested ?? false,
       confirmationPending:
         payload.confirmationPending ??
@@ -181,6 +189,7 @@
     const submitOptions = { isLocalPreview, fetchImpl, storage, now };
     let eventId = getOrCreateEventId(storage, item, createEventId, now);
     const saved = readLocalInterest(storage)[item];
+    let signupEventId = saved?.signupEventId || eventId;
     let submitted = !!saved?.interested;
     let votePending = false;
     let emailPending = false;
@@ -340,7 +349,7 @@
           {
             item,
             action: "email_signup",
-            event_id: eventId,
+            event_id: signupEventId,
             email,
             project_updates: true,
             broader_updates: broaderUpdates,
@@ -351,8 +360,9 @@
         rememberInterest(
           storage,
           item,
-          {
-            event_id: eventId,
+            {
+              event_id: eventId,
+              signup_event_id: signupEventId,
             interested: true,
             confirmationPending: true,
             deliveryStatus: result.status === "queued" ? "queued" : "pending-confirmation",
@@ -378,13 +388,13 @@
         scheduleConfirmationCooldown();
       } catch (error) {
         if (error.code === "confirmation_delivery_failed") {
-          eventId = createEventId();
+          signupEventId = createEventId();
           deliveryStatus = "";
           rememberInterest(
             storage,
             item,
             {
-              event_id: eventId,
+              signup_event_id: signupEventId,
               interested: true,
               confirmationPending: false,
               deliveryStatus: "",

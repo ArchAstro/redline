@@ -28,7 +28,7 @@ The plugin's `bin/` is on PATH for the session:
    **Throughout the session**: before each `redline-pull`, re-check `redline-sidecar status`. If it dropped, restart it the same way (background foreground process). The sidecar must be continuously available for the duration of the redline work.
 
 2. **Decide filters from the user's ask.**
-   - Mentioned a project tag ("the firstlanding redlines") → `--project firstlanding`
+   - Mentioned a project tag ("the my-app redlines") → `--project my-app`
    - Mentioned a specific site/origin → pass it as the first positional arg, e.g. `redline-pull https://localhost:5173`
    - Otherwise pull everything pending
 

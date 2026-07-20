@@ -6,7 +6,7 @@
 # Usage:
 #   redline-watch                         # all pending, all origins
 #   redline-watch https://example.com     # filter by origin
-#   redline-watch --project firstlanding
+#   redline-watch --project my-app
 #   redline-watch --interval 2            # poll interval seconds (default 3)
 set -e
 

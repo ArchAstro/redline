@@ -22,8 +22,7 @@ The Chrome extension can be loaded unpacked from `extension/`.
 
 ## Maintainer Checklist
 
-- Keep `main` protected with required PR review and the `Test` CI check.
-- Dismiss stale approvals when a PR changes.
+- Keep `main` protected with pull requests and the `Test` CI check. ArchAstro maintainers have no mandatory approval requirement.
 - Require conversation resolution before merge.
 - Block force-pushes and branch deletion on `main`.
 - Keep npm publishing on GitHub Actions with provenance enabled.

@@ -17,6 +17,7 @@ PIDFILE="$DIR/sidecar.pid"
 LOGFILE="$DIR/sidecar.log"
 
 mkdir -p "$DIR"
+chmod 700 "$DIR"
 
 is_running() {
   curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1
@@ -46,16 +47,20 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 const [server, pidfile, logfile] = process.argv.slice(2);
-const out = fs.openSync(logfile, 'a');
+const out = fs.openSync(logfile, 'a', 0o600);
+fs.chmodSync(logfile, 0o600);
 const child = spawn(process.execPath, [server], {
   detached: true,
   stdio: ['ignore', out, out],
   env: process.env,
 });
-fs.writeFileSync(pidfile, `${child.pid}\n`);
+fs.writeFileSync(pidfile, `${child.pid}\n`, { mode: 0o600 });
+fs.chmodSync(pidfile, 0o600);
 child.unref();
 NODE
-  for _ in $(seq 1 25); do
+  attempt=0
+  while [ "$attempt" -lt 25 ]; do
+    attempt=$((attempt + 1))
     sleep 0.1
     if is_running; then
       echo "started (pid $(cat "$PIDFILE"), port $PORT, log $LOGFILE)"
@@ -70,9 +75,17 @@ cmd_stop() {
   pid=""
   [ -f "$PIDFILE" ] && pid="$(cat "$PIDFILE")"
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" && rm -f "$PIDFILE"
-    echo "stopped (pid $pid)"
-    return 0
+    command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    case "$command" in
+      *"$HERE/server.js"*)
+        kill "$pid" && rm -f "$PIDFILE"
+        echo "stopped (pid $pid)"
+        return 0
+        ;;
+    esac
+    rm -f "$PIDFILE"
+    echo "ignored stale pid file (pid $pid is not Redline)"
+    return 1
   fi
   rm -f "$PIDFILE"
   echo "not running"

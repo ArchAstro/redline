@@ -10,3 +10,9 @@ test('extension host permissions use Chrome match patterns without ports', () =>
     'http://localhost/*',
   ]);
 });
+
+test('extension requests only the browser permissions it uses', () => {
+  const manifest = JSON.parse(fs.readFileSync('extension/manifest.json', 'utf8'));
+
+  assert.deepEqual(manifest.permissions, ['activeTab', 'storage']);
+});
