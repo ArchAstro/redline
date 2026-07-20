@@ -7,6 +7,7 @@ const test = require('node:test');
 
 const ROOT = path.resolve(__dirname, '..');
 const SETUP = path.join(ROOT, 'setup/redline-agent-setup.js');
+const PACKAGE_VERSION = require('../package.json').version;
 
 function runStatus(home) {
   return spawnSync(process.execPath, [SETUP, '--extension-status'], {
@@ -267,7 +268,7 @@ test('extension status reports version mismatch and reload guidance', () => {
 
     assert.equal(result.status, 1);
     assert.match(result.stdout, /installed: 0\.1\.0/);
-    assert.match(result.stdout, /package: 0\.2\.3/);
+    assert.ok(result.stdout.includes(`package: ${PACKAGE_VERSION}`));
     assert.match(result.stdout, /out of sync/);
     assert.match(result.stdout, /redline setup/);
     assert.match(result.stdout, /chrome:\/\/extensions/);
