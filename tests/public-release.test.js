@@ -1,10 +1,12 @@
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
 const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('public guidance uses public examples and current ArchAstro contacts', () => {
   const publicGuidance = [
@@ -57,6 +59,51 @@ test('package and docs state the supported Unix prerequisites', () => {
   assert.match(read('README.md'), /macOS or Linux/i);
   assert.match(read('README.md'), /Bash, curl, and jq/i);
   assert.doesNotMatch(read('.claude-plugins/redline/bin/redline-sidecar'), /\bseq\b/);
+});
+
+test('README maps each supported redline invocation to its surface', () => {
+  const readme = read('README.md');
+  const claudePlugin = JSON.parse(read('.claude-plugins/redline/.claude-plugin/plugin.json'));
+  const codexPlugin = JSON.parse(read('plugins/redline/.codex-plugin/plugin.json'));
+  const pkg = JSON.parse(read('package.json'));
+  const workflowName = 'pull';
+  const skillPath = path.join(root, 'plugins/redline/skills', workflowName, 'SKILL.md');
+  const terminalBin = Object.entries(pkg.bin)
+    .find(([, target]) => target === 'setup/redline.js');
+  const pullHelp = spawnSync(process.execPath, ['setup/redline.js', workflowName, '--help'], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  const architectureDiagram = [...readme.matchAll(/^```[^\n]*\n([\s\S]*?)\n```$/gm)]
+    .map((match) => match[1])
+    .find((diagram) => diagram.includes('[ Chrome extension ]'));
+
+  assert.ok(fs.existsSync(skillPath), `${path.relative(root, skillPath)} must exist`);
+  assert.ok(terminalBin, 'package must expose the setup/redline.js terminal binary');
+  assert.equal(pullHelp.status, 0, pullHelp.stderr || pullHelp.stdout);
+  assert.match(pullHelp.stdout, /^# Usage:\n#\s+redline-pull\b/m);
+  const terminalCommand = terminalBin[0];
+  const displayName = codexPlugin.interface.displayName;
+  const portablePrompt = codexPlugin.interface.defaultPrompt[0];
+  const claudeInvocation = `/${claudePlugin.name}:${workflowName}`;
+  const expectedRows = [
+    ['Portable prompt', `"${portablePrompt}"`],
+    ['Claude Code', claudeInvocation],
+    ['Codex CLI/IDE', `$${codexPlugin.name}:${workflowName}`],
+    ['Codex desktop app', `@${displayName}`],
+    ['Terminal', `${terminalCommand} ${workflowName}`],
+  ];
+
+  assert.ok(architectureDiagram, 'README architecture diagram is missing');
+  assert.doesNotMatch(architectureDiagram, new RegExp(escapeRegExp(claudeInvocation)));
+  assert.match(readme, /^\| Surface\s+\| Invocation\s+\|$/m);
+  for (const [surface, invocation] of expectedRows) {
+    assert.match(readme, new RegExp(`^\\| ${escapeRegExp(surface)}\\s+\\| \`${escapeRegExp(invocation)}\`\\s+\\|$`, 'm'));
+  }
+  assert.match(
+    readme,
+    new RegExp(`^In the Codex desktop app, select \`${escapeRegExp(`@${displayName}`)}\`, then ask \`"${escapeRegExp(portablePrompt)}"\`$`, 'm'),
+  );
 });
 
 test('pull skill applies straightforward redlines without confirmation and keeps safety gates', () => {
