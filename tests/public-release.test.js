@@ -58,3 +58,16 @@ test('package and docs state the supported Unix prerequisites', () => {
   assert.match(read('README.md'), /Bash, curl, and jq/i);
   assert.doesNotMatch(read('.claude-plugins/redline/bin/redline-sidecar'), /\bseq\b/);
 });
+
+test('pull skill applies straightforward redlines without confirmation and keeps safety gates', () => {
+  const claudeSkill = read('.claude-plugins/redline/skills/pull/SKILL.md');
+  const codexSkill = read('plugins/redline/skills/pull/SKILL.md');
+
+  assert.equal(codexSkill, claudeSkill);
+  assert.match(codexSkill, /apply straightforward, low-risk redlines without asking for confirmation/i);
+  assert.match(codexSkill, /show, list, or review[^.]+inspection-only/i);
+  assert.match(codexSkill, /ask before editing/i);
+  assert.match(codexSkill, /ambiguous|destructive|broad/i);
+  assert.match(codexSkill, /inspect the final diff[^.]+relevant checks[^.]+before ack/i);
+  assert.doesNotMatch(codexSkill, /Wait for the user to confirm before editing/);
+});

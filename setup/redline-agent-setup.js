@@ -714,7 +714,7 @@ async function extensionStatus(sourceRoot) {
         ? await copyTree(extSrc, extDst, true, {
             'manifest.json': (raw) => patchExtensionManifestForMode(raw, mode),
             'auth.js': (raw) => patchExtensionAuth(raw, authToken, port),
-          })
+          }, { 'auth.js': 0o600 })
         : false);
       log(`  installed: ${installedVersion}`);
       log(`  package: ${packageVersion || '(unknown)'}`);
