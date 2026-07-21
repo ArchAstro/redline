@@ -20,7 +20,7 @@ test("OSS home is a compact repository index", () => {
   assert.match(html, /class="repository-entry"/);
   assert.match(html, /class="lab-entry"/);
   assert.match(html, /Open source tools from ArchAstro/);
-  assert.match(html, /Developer tools extracted from how we build ArchAgents\./);
+  assert.match(html, /Developer tools extracted from how we build ArchAgents<\/h1>/);
   assert.match(html, /Redline sends precise webpage feedback to coding agents\./);
   assert.doesNotMatch(html, /class="hero"|class="oss-proof"|class="start-path"|class="directory"/);
 });

@@ -46,9 +46,13 @@ The plugin's `bin/` is on PATH for the session:
 
 5. **Find the source code.** For each item, grep the repo for the exact `selected_text`. If multiple hits, use `surrounding_text` to disambiguate. If you can't locate the source, say so and skip that item — do not guess at random files.
 
-6. **Show the plan; do not edit yet.** Present a punch list: `<item id> — <file>:<line> — change "X" → "Y"`. Wait for the user to confirm before editing. They may want to triage, skip some, or reword.
+6. **Triage and act.** The user's request to pull or apply redlines authorizes straightforward, low-risk edits. Apply straightforward, low-risk redlines without asking for confirmation when the intent is explicit, the source match is unique, the change is narrow, and the result can be verified. Report a concise punch list after making those edits.
 
-7. **After edits land and the user confirms, ack the consumed items** so they don't re-appear:
+   Requests to show, list, or review redlines are inspection-only unless the user also asks to apply or fix them.
+
+   Ask before editing when a redline is ambiguous, destructive, broad or cross-cutting, conflicts with another request, has multiple plausible source matches, or cannot be verified safely. For a mixed batch, apply the safe items and present only the blocked items for a decision.
+
+7. **Verify, then ack each successfully applied item** so it does not re-appear. Inspect the final diff for unintended changes and run the relevant checks before acking. Leave skipped, failed, or confirmation-blocked items pending:
    ```bash
    curl -s -X POST "http://127.0.0.1:${REDLINE_PORT:-7878}/redlines/<id>/ack" >/dev/null
    ```
@@ -60,7 +64,7 @@ The plugin's `bin/` is on PATH for the session:
    Monitor(<that shell_id>, until: a new id line appears)
    ```
 
-   Apply the same filters you used for `redline-pull` (origin, `--project`) so you don't get woken up by unrelated work. Each line `Monitor` surfaces is one new pending redline id — do **not** ack from `redline-watch`'s output; run a full `redline-pull --no-ack [filters]` cycle (steps 3–7) so the user still sees the markdown summary and can confirm before edits land. Keep the watcher running until the user explicitly says they're done; on session wrap-up, kill the background shell.
+   Apply the same filters you used for `redline-pull` (origin, `--project`) so you don't get woken up by unrelated work. Each line `Monitor` surfaces is one new pending redline id — do **not** ack from `redline-watch`'s output; run the full `redline-pull --no-ack [filters]` triage, edit, verify, and ack cycle (steps 3–7). Keep the watcher running until the user explicitly says they're done; on session wrap-up, kill the background shell.
 
 ## Heuristics
 

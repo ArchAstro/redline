@@ -248,6 +248,8 @@ test('extension status reports screenshot capability and upgrade command', () =>
     assert.equal(full.status, 1);
     assert.match(full.stdout, /mode: full-access/);
     assert.match(full.stdout, /screenshots: enabled/);
+    assert.match(full.stdout, /synced: extension files match/);
+    assert.doesNotMatch(full.stdout, /out of sync/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
