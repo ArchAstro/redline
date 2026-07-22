@@ -19,6 +19,7 @@
   }
 })(typeof window === "undefined" ? null : window, function () {
   const interestKey = "archastro-oss-interest";
+  const productionWaitlistEndpoint = "https://platform.archastro.ai/api/v1/developer/waitlist";
 
   function sanitizeInterestStore(store) {
     return Object.fromEntries(
@@ -26,19 +27,11 @@
         item,
         {
           eventId: typeof record?.eventId === "string" ? record.eventId : "",
-          signupEventId:
-            typeof record?.signupEventId === "string"
-              ? record.signupEventId
-              : typeof record?.eventId === "string"
-                ? record.eventId
-                : "",
           interested: !!record?.interested,
-          confirmationPending: !!(
-            record?.confirmationPending || record?.emailSubmitted || record?.email
+          emailSaved: !!(
+            record?.emailSaved || record?.emailSubmitted || record?.email
           ),
-          deliveryStatus: ["queued", "pending-confirmation"].includes(record?.deliveryStatus)
-            ? record.deliveryStatus
-            : "",
+          emailLocalOnly: !!record?.emailLocalOnly,
           updatedAt: typeof record?.updatedAt === "string" ? record.updatedAt : "",
         },
       ])
@@ -65,31 +58,42 @@
     const saved = store[item] || {};
     store[item] = {
       eventId: payload.event_id || saved.eventId || "",
-      signupEventId:
-        payload.signup_event_id || saved.signupEventId || payload.event_id || saved.eventId || "",
       interested: payload.interested ?? saved.interested ?? false,
-      confirmationPending:
-        payload.confirmationPending ??
-        (payload.action === "email_signup" ? true : saved.confirmationPending ?? false),
-      deliveryStatus:
-        payload.deliveryStatus ??
-        (payload.confirmationPending === false ? "" : saved.deliveryStatus ?? ""),
+      emailSaved: payload.emailSaved ?? saved.emailSaved ?? false,
+      emailLocalOnly: payload.emailLocalOnly ?? saved.emailLocalOnly ?? false,
       updatedAt: now().toISOString(),
     };
     storage.setItem(interestKey, JSON.stringify(store));
     return store[item];
   }
 
+  function isValidEventId(value) {
+    return typeof value === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }
+
+  function generateEventId(cryptoImpl = globalThis.crypto, random = Math.random) {
+    const nativeId = cryptoImpl?.randomUUID?.();
+    if (isValidEventId(nativeId)) return nativeId;
+
+    const bytes = Array.from({ length: 16 }, () => Math.floor(random() * 256) & 0xff);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = bytes.map((byte) => byte.toString(16).padStart(2, "0"));
+    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+  }
+
   function getOrCreateEventId(storage, item, createEventId, now) {
     const saved = readLocalInterest(storage)[item];
-    if (saved?.eventId) return saved.eventId;
+    if (isValidEventId(saved?.eventId)) return saved.eventId;
 
-    const eventId = createEventId();
+    const candidate = createEventId();
+    const eventId = isValidEventId(candidate) ? candidate : generateEventId();
     try {
       saveLocalInterest(
         storage,
         item,
-        { event_id: eventId, interested: false },
+        { event_id: eventId },
         now
       );
     } catch (_error) {
@@ -106,40 +110,75 @@
     }
   }
 
+  function resolveInterestSubmission(location) {
+    const hostname = location?.hostname || "";
+    const loopbackPage = hostname === "localhost" || hostname === "127.0.0.1";
+    const localPreview = loopbackPage || hostname === "";
+    if (!localPreview) {
+      return { isLocalPreview: false, endpoint: productionWaitlistEndpoint };
+    }
+
+    const params = new URLSearchParams(location?.search || "");
+    if (!loopbackPage || params.get("oss_e2e") !== "1") {
+      return { isLocalPreview: true, endpoint: null };
+    }
+
+    try {
+      const endpoint = new URL(params.get("waitlist_endpoint") || "");
+      const loopback = endpoint.hostname === "localhost" || endpoint.hostname === "127.0.0.1";
+      if (loopback && ["http:", "https:"].includes(endpoint.protocol)) {
+        return { isLocalPreview: false, endpoint: endpoint.href };
+      }
+    } catch (_error) {
+      // Invalid E2E configuration stays private.
+    }
+
+    return { isLocalPreview: true, endpoint: null };
+  }
+
+  function platformPayload(payload) {
+    const request = {
+      source: payload.source,
+      interest: payload.interest,
+      action: payload.action,
+      event_id: payload.event_id,
+    };
+    if (payload.action === "email_signup") {
+      request.email = payload.email;
+      request.project_updates = payload.project_updates;
+      request.broader_updates = payload.broader_updates;
+    }
+    return request;
+  }
+
   async function submitInterest(payload, options) {
     if (options.isLocalPreview) {
       return saveLocalInterest(
         options.storage,
-        payload.item,
-        { ...payload, interested: payload.action === "thumbs_up" },
+        payload.interest,
+        {
+          ...payload,
+          interested: payload.action === "thumbs_up",
+          emailLocalOnly: payload.action === "email_signup",
+        },
         options.now
       );
     }
 
-    const response = await options.fetchImpl("/api/oss/lab-interest", {
+    const response = await options.fetchImpl(options.endpoint || productionWaitlistEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(platformPayload(payload)),
     });
 
-    let responseBody = null;
-    if (typeof response.json === "function") {
-      try {
-        responseBody = await response.json();
-      } catch (_error) {
-        // A successful response with an empty or malformed body is still accepted.
-      }
-    }
     if (!response.ok) {
       const error = new Error(`Interest endpoint returned ${response.status}`);
       error.status = response.status;
-      error.code = responseBody?.error?.code || "";
       throw error;
     }
     return {
       interested: payload.action === "thumbs_up",
-      confirmationPending: payload.action === "email_signup",
-      status: typeof responseBody?.status === "string" ? responseBody.status : null,
+      emailSaved: payload.action === "email_signup",
     };
   }
 
@@ -179,85 +218,47 @@
       form,
       note,
       isLocalPreview,
+      endpoint,
       fetchImpl,
       storage,
       now = () => new Date(),
-      createEventId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
-      cooldownMs = 60_000,
-      setTimeoutImpl = globalThis.setTimeout,
+      createEventId = generateEventId,
     } = options;
-    const submitOptions = { isLocalPreview, fetchImpl, storage, now };
+    const submitOptions = { isLocalPreview, endpoint, fetchImpl, storage, now };
     let eventId = getOrCreateEventId(storage, item, createEventId, now);
     const saved = readLocalInterest(storage)[item];
-    let signupEventId = saved?.signupEventId || eventId;
     let submitted = !!saved?.interested;
     let votePending = false;
     let emailPending = false;
-    let confirmationPending = !!saved?.confirmationPending;
-    let deliveryStatus = saved?.deliveryStatus || "";
+    let emailSaved = !isLocalPreview && !!saved?.emailSaved;
+    let emailLocalOnly = isLocalPreview && !!(saved?.emailLocalOnly || saved?.emailSaved);
     const projectName = item === "astrodev" ? "AstroDev" : `${item[0].toUpperCase()}${item.slice(1)}`;
-    const submitButton = form.querySelector?.('button[type="submit"]');
 
-    function confirmationMessage(broaderUpdates = false) {
-      return broaderUpdates
-        ? `Check your inbox to confirm ${projectName} and broader ArchAstro updates.`
-        : `Check your inbox to confirm ${projectName} updates.`;
-    }
-
-    function removedConfirmationMessage(queued = false) {
-      return queued
-        ? "Your feedback was removed. Confirmation delivery is still queued."
-        : "Your feedback was removed. Your email confirmation is still pending.";
-    }
-
-    function finishConfirmationCooldown() {
-      confirmationPending = false;
-      deliveryStatus = "";
+    if (isLocalPreview && saved?.emailSaved) {
       rememberInterest(
         storage,
         item,
-        {
-          event_id: eventId,
-          interested: submitted,
-          confirmationPending: false,
-          deliveryStatus: "",
-        },
+        { event_id: eventId, emailSaved: false, emailLocalOnly: true },
         now
       );
-      setInterestFormDisabled(form, false);
-      if (submitButton) submitButton.textContent = "Send again";
-      if (submitted) {
-        setNote(note, "Didn't get it? You can send the confirmation again.", "retry");
-      } else {
-        setNote(note, "Feedback removed. Any confirmation email already sent remains valid.", "removed");
-      }
     }
 
-    function scheduleConfirmationCooldown(delay = cooldownMs) {
-      const timer = setTimeoutImpl(finishConfirmationCooldown, Math.max(0, delay));
-      timer?.unref?.();
+    function emailSavedMessage(broaderUpdates = false) {
+      return broaderUpdates
+        ? `Email saved for ${projectName} and broader ArchAstro updates.`
+        : `Email saved for ${projectName} updates.`;
     }
 
     if (saved?.interested) {
       showInterestForm(form);
       markInterestSaved(button);
     }
-    if (confirmationPending) {
-      setInterestFormDisabled(form, confirmationPending);
-      const queued = deliveryStatus === "queued";
-      setNote(
-        note,
-        saved?.interested
-          ? queued
-            ? "Confirmation delivery is delayed; we will retry shortly. You can send again in a minute."
-            : confirmationMessage()
-          : removedConfirmationMessage(queued),
-        queued ? "queued" : "pending-confirmation"
-      );
-      const elapsed = Math.max(0, now().getTime() - Date.parse(saved.updatedAt || ""));
-      const remaining = Number.isFinite(elapsed) ? cooldownMs - elapsed : cooldownMs;
-      if (remaining > 0) scheduleConfirmationCooldown(remaining);
-      else finishConfirmationCooldown();
+    if (emailLocalOnly) {
+      setInterestFormDisabled(form, true);
+      setNote(note, "Local preview only: email address was not sent or stored.", "local-only");
+    } else if (emailSaved) {
+      setInterestFormDisabled(form, true);
+      setNote(note, emailSavedMessage(), "saved");
     } else if (saved?.interested) {
       setInterestFormDisabled(form, false);
       setNote(note, "Feedback saved. Add an email if you want an update.", "saved");
@@ -274,7 +275,7 @@
       try {
         await submitInterest(
           {
-            item,
+            interest: item,
             action: removing ? "remove_interest" : "thumbs_up",
             event_id: eventId,
             source: "oss_catalog_lab",
@@ -286,21 +287,20 @@
         if (removing) {
           markInterestRemoved(button);
           form.hidden = true;
-          setInterestFormDisabled(form, confirmationPending);
-          if (confirmationPending) {
-            setNote(
-              note,
-              removedConfirmationMessage(deliveryStatus === "queued"),
-              deliveryStatus === "queued" ? "queued" : "pending-confirmation"
-            );
-          } else {
-            setNote(note, "Feedback removed.", "removed");
-          }
+          setInterestFormDisabled(form, true);
+          setNote(
+            note,
+            emailSaved ? "Feedback removed. Email updates remain saved." : "Feedback removed.",
+            "removed"
+          );
         } else {
           markInterestSaved(button);
-          setInterestFormDisabled(form, confirmationPending);
+          setInterestFormDisabled(form, emailSaved || emailLocalOnly);
+          if (emailSaved) {
+            setNote(note, "Feedback saved. Email updates remain saved.", "saved");
+          }
         }
-        if (!removing && !emailPending && !confirmationPending) {
+        if (!removing && !emailPending && !emailSaved) {
           setNote(
             note,
             isLocalPreview
@@ -322,13 +322,13 @@
       } finally {
         votePending = false;
         button.removeAttribute("aria-busy");
-        setInterestFormDisabled(form, confirmationPending || !submitted);
+        setInterestFormDisabled(form, emailSaved || emailLocalOnly || !submitted);
       }
     });
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (!submitted || votePending || emailPending || confirmationPending) return;
+      if (!submitted || votePending || emailPending || emailSaved || emailLocalOnly) return;
       const emailInput = form.querySelector('[name="email"]');
       const submitButton = form.querySelector('button[type="submit"]');
       const broaderUpdatesInput = form.querySelector('[name="broader_updates"]');
@@ -345,11 +345,11 @@
       setInterestFormDisabled(form, true);
       setNote(note, "Saving email...", "pending");
       try {
-        const result = await submitInterest(
+        await submitInterest(
           {
-            item,
+            interest: item,
             action: "email_signup",
-            event_id: signupEventId,
+            event_id: eventId,
             email,
             project_updates: true,
             broader_updates: broaderUpdates,
@@ -360,52 +360,28 @@
         rememberInterest(
           storage,
           item,
-            {
-              event_id: eventId,
-              signup_event_id: signupEventId,
+          {
+            event_id: eventId,
             interested: true,
-            confirmationPending: true,
-            deliveryStatus: result.status === "queued" ? "queued" : "pending-confirmation",
+            emailSaved: !isLocalPreview,
+            emailLocalOnly: isLocalPreview,
           },
           now
         );
-        confirmationPending = true;
-        deliveryStatus = result.status === "queued" ? "queued" : "pending-confirmation";
-        const deliveryMessage =
-          result.status === "queued"
-            ? "Confirmation delivery is delayed; we will retry shortly. You can send again in a minute."
-            : result.status === "pending_confirmation"
-              ? confirmationMessage(broaderUpdates)
-              : "Confirmation request accepted. Delivery status is unavailable; you can send again in a minute.";
-        const deliveryState = result.status === "queued" ? "queued" : "pending-confirmation";
+        emailSaved = !isLocalPreview;
+        emailLocalOnly = isLocalPreview;
         setNote(
           note,
           isLocalPreview
-            ? "Local preview only: confirmation request noted; the email address was not stored."
-            : deliveryMessage,
-          deliveryState
+            ? "Local preview only: email address was not sent or stored."
+            : emailSavedMessage(broaderUpdates),
+          isLocalPreview ? "local-only" : "saved"
         );
-        scheduleConfirmationCooldown();
-      } catch (error) {
-        if (error.code === "confirmation_delivery_failed") {
-          signupEventId = createEventId();
-          deliveryStatus = "";
-          rememberInterest(
-            storage,
-            item,
-            {
-              signup_event_id: signupEventId,
-              interested: true,
-              confirmationPending: false,
-              deliveryStatus: "",
-            },
-            now
-          );
-        }
+      } catch (_error) {
         setNote(note, "Request could not be completed. Please try again.", "error");
       } finally {
         emailPending = false;
-        setInterestFormDisabled(form, confirmationPending);
+        setInterestFormDisabled(form, emailSaved || emailLocalOnly);
       }
     });
   }
@@ -577,8 +553,7 @@
 
   function initialize(options) {
     const { window, document } = options;
-    const hostname = window.location?.hostname || "";
-    const isLocalPreview = ["localhost", "127.0.0.1", ""].includes(hostname);
+    const submission = resolveInterestSubmission(window.location);
     let storage;
     try {
       storage = window.localStorage;
@@ -592,7 +567,7 @@
         button: itemElement.querySelector("[data-interest-button]"),
         form: itemElement.querySelector("[data-interest-form]"),
         note: itemElement.querySelector("[data-interest-note]"),
-        isLocalPreview,
+        ...submission,
         fetchImpl: window.fetch?.bind(window),
         storage,
       });
@@ -649,9 +624,11 @@
     bindMotion,
     bindRecordingDialog,
     copyWithTextarea,
+    createEventId: generateEventId,
     initialize,
     getOrCreateEventId,
     readLocalInterest,
+    resolveInterestSubmission,
     submitInterest,
   };
 });

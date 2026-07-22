@@ -1,11 +1,50 @@
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
 const root = path.join(__dirname, "..", "docs", "oss");
+const repositoryRoot = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+
+function trackedCatalogTextFiles() {
+  const tracked = execFileSync("git", ["ls-files", "-z", "--", "docs/oss", "tests"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+  }).split("\0").filter(Boolean);
+  const textExtensions = new Set([".css", ".html", ".js", ".md", ".sql", ".toml"]);
+
+  return tracked.filter((file) => {
+    const intended = file.startsWith("docs/oss/") || /^tests\/oss-[^/]+\.test\.js$/.test(file);
+    return intended && textExtensions.has(path.extname(file)) &&
+      fs.existsSync(path.join(repositoryRoot, file));
+  });
+}
+
+test("removed OSS Worker infrastructure and confirmation lifecycle stay absent", () => {
+  assert.equal(fs.existsSync(path.join(root, "worker")), false);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, "tests", "oss-interest-worker.test.js")), false);
+
+  const files = trackedCatalogTextFiles();
+  assert.ok(files.includes("docs/oss/app.js"));
+  assert.ok(files.includes("docs/oss/index.html"));
+  assert.ok(files.includes("tests/oss-catalog-behavior.test.js"));
+  assert.ok(files.includes("tests/oss-media.test.js"));
+  assert.ok(files.every((file) => !file.startsWith("docs/oss/worker/")));
+
+  const staleTerms = [
+    "/api/" + "oss/lab-interest",
+    "pending_" + "confirmation",
+    "confirmation" + "Pending",
+    "delivery" + "Status",
+  ];
+  const stalePattern = new RegExp(staleTerms.join("|"));
+  for (const file of files) {
+    assert.doesNotMatch(fs.readFileSync(path.join(repositoryRoot, file), "utf8"), stalePattern, file);
+  }
+});
 
 test("browser chrome identifies the OSS catalog as ArchAstro", () => {
   assert.match(html, /<title>Open Source &middot; ArchAstro<\/title>/);
