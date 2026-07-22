@@ -187,7 +187,7 @@ ul {
   max-width: 720px;
   margin-inline: auto;
   padding: 44px 0 42px;
-  text-align: center;
+  text-align: left;
 }
 
 .eyebrow,
@@ -209,7 +209,7 @@ ul {
 
 .catalog-intro h1 {
   max-width: 660px;
-  margin-inline: auto;
+  margin-inline: 0;
   margin-bottom: 12px;
   font-size: 1.8rem;
   font-weight: 600;
@@ -218,7 +218,7 @@ ul {
 
 .catalog-intro > p:last-child {
   max-width: 64ch;
-  margin-inline: auto;
+  margin-inline: 0;
   margin-bottom: 0;
   color: var(--muted);
   font-size: 0.96rem;

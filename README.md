@@ -9,7 +9,7 @@ into your session so the agent can act on the feedback.
 
 ```
 [ Chrome extension ]  --POST-->  [ Sidecar @ 127.0.0.1:7878 ]  --GET-->  [ Claude / Codex ]
-   select + comment                 ~/.redline/redlines.json               /redline:pull
+   select + comment                 ~/.redline/redlines.json                agent pull
 ```
 
 ## How It Works
@@ -148,6 +148,19 @@ redline status
 
 ## Use
 
+Ask your agent: **"Pull my redlines."** Use the surface-specific invocation
+when you prefer to invoke Redline directly:
+
+| Surface | Invocation |
+| ------- | ---------- |
+| Portable prompt | `"Pull my redlines."` |
+| Claude Code | `/redline:pull` |
+| Codex CLI/IDE | `$redline:pull` |
+| Codex desktop app | `@Redline` |
+| Terminal | `redline pull` |
+
+In the Codex desktop app, select `@Redline`, then ask `"Pull my redlines."`
+
 1. **Start the sidecar** (idempotent, detaches in the background, exits
    immediately once `/health` responds):
 
@@ -168,10 +181,11 @@ redline status
    on that page. Use the **Refresh shot** button in the toolbar popup to force
    a new snapshot if the page state changes.
 
-3. **From any Claude Code session**, ask "pull my redlines" — the
-   `redline:pull` skill runs `redline-pull --no-ack`, finds the source code
-   for each item by grepping for the literal selected text, presents a plan,
-   and (once you approve) applies the edits and acks the items.
+3. **Pull the redlines** with the portable prompt or the invocation for your
+   surface. The bundled skill runs `redline-pull --no-ack` and finds the source
+   code for each item by grepping for the literal selected text. Straightforward,
+   low-risk redlines are applied and verified automatically. Ambiguous,
+   destructive, or broad changes require clarification before editing.
 
    Or run it directly:
 
@@ -388,5 +402,5 @@ redline/
     │   ├── redline-tail
     │   └── redline-clear
     ├── server.js                     # Node stdlib HTTP sidecar
-    └── skills/pull/SKILL.md          # /redline:pull
+    └── skills/pull/SKILL.md          # $redline:pull / @Redline
 ```
