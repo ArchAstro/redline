@@ -1,5 +1,11 @@
 # @archastro/redline
 
+## 0.2.5
+
+### Patch Changes
+
+- a5d0b9b: Apply clear, low-risk redlines without an extra confirmation step, keep ambiguous or broad feedback pending for clarification, and stop reporting correctly secured extension files as out of sync.
+
 ## 0.2.4
 
 ### Patch Changes
