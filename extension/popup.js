@@ -86,11 +86,8 @@ function renderItems(origin) {
       deleteButton.disabled = true;
       deleteStatus.textContent = 'deleting...';
       try {
-        const response = await sidecarFetch(`${BASE}/redlines/${it.id}`, { method: 'DELETE' });
-        if (response.status === 401) {
-          throw new Error('Reload Redline in chrome://extensions, then refresh this page.');
-        }
-        if (!response.ok) throw new Error(`Could not delete redline (${response.status}).`);
+        const response = await chrome.runtime.sendMessage({ type: 'delete-redline', id: it.id });
+        if (!response?.ok) throw new Error(response?.error || 'Could not delete redline.');
         allItems = allItems.filter((item) => item.id !== it.id);
         renderItems(origin);
       } catch (error) {

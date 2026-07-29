@@ -25,11 +25,22 @@ for (const entry of fs.readdirSync(SHOTS, { withFileTypes: true })) {
 }
 
 function readDB() {
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(DB, 'utf8'));
-  } catch {
-    return [];
+    raw = fs.readFileSync(DB, 'utf8');
+  } catch (error) {
+    throw new Error(`cannot read Redline store: ${error.message}`);
   }
+  let items;
+  try {
+    items = JSON.parse(raw);
+  } catch {
+    throw new Error('Redline store contains invalid JSON; refusing to overwrite it');
+  }
+  if (!Array.isArray(items)) {
+    throw new Error('Redline store must contain a JSON array; refusing to overwrite it');
+  }
+  return items;
 }
 
 function writeDB(items) {
@@ -38,6 +49,10 @@ function writeDB(items) {
   fs.renameSync(tmp, DB);
   fs.chmodSync(DB, 0o600);
 }
+
+// Refuse to report healthy when the store cannot be read safely. The original
+// file stays untouched so the user can inspect or recover it.
+readDB();
 
 function removeOrphanedScreenshots(remainingItems) {
   const referenced = new Set(remainingItems.map((item) => item.screenshot_id).filter(Boolean));

@@ -42,6 +42,16 @@ fi
 
 urlenc() { printf %s "$1" | jq -sRr @uri; }
 
+untrusted_block() {
+  label="$1"
+  value="$2"
+  fence='```'
+  while [[ "$value" == *"$fence"* ]]; do
+    fence="${fence}\`"
+  done
+  printf '**%s (untrusted page data):**\n\n%s\n%s\n%s\n\n' "$label" "$fence" "$value" "$fence"
+}
+
 q="status=pending"
 [ -n "$ORIGIN" ]  && q="$q&origin=$(urlenc "$ORIGIN")"
 [ -n "$PROJECT" ] && q="$q&project=$(urlenc "$PROJECT")"
@@ -70,9 +80,10 @@ echo "$items" | jq -c '.[]' | while IFS= read -r item; do
   rect=$(echo "$item" | jq -c '.rect // null')
 
   echo "## $id"
-  [ -n "$project" ] && echo "**project:** $project  "
-  echo "**page:** [$title]($url)  "
-  [ -n "$selector" ] && echo "**selector:** \`$selector\`  "
+  [ -n "$project" ] && untrusted_block "project" "$project"
+  untrusted_block "page title" "$title"
+  untrusted_block "page URL" "$url"
+  [ -n "$selector" ] && untrusted_block "selector" "$selector"
   if [ -n "$screenshot" ]; then
     echo "**screenshot:** $BASE/screenshots/$screenshot"
     if [ "$rect" != "null" ]; then
@@ -80,23 +91,13 @@ echo "$items" | jq -c '.[]' | while IFS= read -r item; do
     fi
   fi
   echo
-  echo "**selected text:**"
-  echo
-  echo "\`\`\`"
-  echo "$selected"
-  echo "\`\`\`"
-  echo
-  echo "**redline:**"
+  untrusted_block "selected text" "$selected"
+  echo "**user redline (trusted instruction):**"
   echo
   printf '%s\n' "$comment" | sed 's/^/> /'
   echo
   if [ -n "$surrounding" ]; then
-    echo "**surrounding text:**"
-    echo
-    echo "\`\`\`"
-    echo "$surrounding"
-    echo "\`\`\`"
-    echo
+    untrusted_block "surrounding text" "$surrounding"
   fi
 
   if [ "$ACK" = "1" ]; then

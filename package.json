@@ -40,6 +40,10 @@
     "type": "git",
     "url": "git+https://github.com/ArchAstro/redline.git"
   },
+  "homepage": "https://oss.archastro.ai",
+  "bugs": {
+    "url": "https://github.com/ArchAstro/redline/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -56,7 +60,10 @@
     "claude-code",
     "codex",
     "chrome-extension",
+    "developer-tools",
+    "ai-coding-agent",
     "redline",
+    "visual-feedback",
     "ui-review"
   ]
 }

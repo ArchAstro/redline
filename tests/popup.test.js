@@ -31,12 +31,13 @@ test('popup identifies a 401 as a stale loaded extension', () => {
 });
 
 test('popup preserves a redline and reports an error when deletion fails', () => {
-  const deleteRequest = js.indexOf("const response = await sidecarFetch(`${BASE}/redlines/${it.id}`");
-  const responseCheck = js.indexOf('if (!response.ok)', deleteRequest);
+  const deleteRequest = js.indexOf("chrome.runtime.sendMessage({ type: 'delete-redline', id: it.id })");
+  const responseCheck = js.indexOf('if (!response?.ok)', deleteRequest);
   const localRemoval = js.indexOf('allItems = allItems.filter', deleteRequest);
 
   assert.ok(deleteRequest >= 0);
   assert.ok(responseCheck > deleteRequest);
   assert.ok(localRemoval > responseCheck);
   assert.match(js, /deleteStatus\.textContent = error\.message/);
+  assert.doesNotMatch(js, /sidecarFetch\(`\$\{BASE\}\/redlines\/\$\{it\.id\}`/);
 });
