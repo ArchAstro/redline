@@ -1,6 +1,6 @@
 {
   "name": "redline",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Pull and act on UI redlines captured by the Redline Chrome extension via a local HTTP sidecar.",
   "author": {
     "name": "ArchAstro"
