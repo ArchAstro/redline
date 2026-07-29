@@ -26,12 +26,6 @@ function synchronizeVersions(root, check) {
   const version = readJson(root, 'package.json').version;
   const targets = [
     ['extension/manifest.json', (value) => { value.version = version; }],
-    ['.claude-plugins/redline/.claude-plugin/plugin.json', (value) => { value.version = version; }],
-    ['plugins/redline/.codex-plugin/plugin.json', (value) => { value.version = version; }],
-    ['.claude-plugin/marketplace.json', (value) => {
-      value.metadata.version = version;
-      for (const plugin of value.plugins) plugin.version = version;
-    }],
   ];
   const mismatches = [];
   for (const [relativePath, update] of targets) {

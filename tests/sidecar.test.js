@@ -53,7 +53,7 @@ async function startSidecar(t, prepare) {
   const authToken = 'test-capability-token-with-at-least-32-bytes';
   fs.writeFileSync(path.join(dir, 'auth-token'), authToken, { mode: 0o600 });
   if (prepare) prepare(dir);
-  const child = spawn(process.execPath, ['plugins/redline/server.js'], {
+  const child = spawn(process.execPath, ['runtime/server.js'], {
     cwd: path.resolve(__dirname, '..'),
     env: { ...process.env, REDLINE_PORT: String(port), REDLINE_DIR: dir },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -82,16 +82,6 @@ async function startSidecar(t, prepare) {
   throw new Error(`sidecar did not start: ${stderr}`);
 }
 
-test('Codex sidecar entry point delegates to the canonical server', () => {
-  const entryPoint = fs.readFileSync(
-    path.resolve(__dirname, '../plugins/redline/server.js'),
-    'utf8',
-  );
-
-  assert.match(entryPoint, /require\(['"]\.\.\/\.\.\/\.claude-plugins\/redline\/server\.js['"]\)/);
-  assert.doesNotMatch(entryPoint, /createServer|function readDB|function writeDB/);
-});
-
 test('sidecar refuses to start with a corrupt store and preserves it', () => {
   const port = 17880;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-corrupt-store-'));
@@ -100,7 +90,7 @@ test('sidecar refuses to start with a corrupt store and preserves it', () => {
   try {
     fs.writeFileSync(db, corrupt, { mode: 0o600 });
     fs.writeFileSync(path.join(dir, 'auth-token'), 'test-capability-token-with-at-least-32-bytes', { mode: 0o600 });
-    const result = spawnSync(process.execPath, ['plugins/redline/server.js'], {
+    const result = spawnSync(process.execPath, ['runtime/server.js'], {
       cwd: path.resolve(__dirname, '..'),
       env: { ...process.env, REDLINE_PORT: String(port), REDLINE_DIR: dir },
       encoding: 'utf8',
@@ -211,7 +201,7 @@ test('redline-pull contains untrusted page text inside a safe Markdown fence', a
   assert.equal(created.status, 201);
 
   const result = spawnSync(
-    path.resolve(__dirname, '../.claude-plugins/redline/bin/redline-pull'),
+    path.resolve(__dirname, '../runtime/bin/redline-pull'),
     ['--no-ack'],
     {
       cwd: path.resolve(__dirname, '..'),

@@ -1,27 +1,26 @@
 {
   "name": "@archastro/redline",
   "version": "0.2.6",
-  "description": "Highlight live web UI, leave redlines, pipe them into Claude Code / Codex. Chrome extension + local sidecar + multi-harness plugin.",
+  "description": "Highlight live web UI, leave redlines, and pipe them into any agent that supports open agent skills.",
   "bin": {
     "redline": "setup/redline.js",
     "redline-agent-setup": "setup/redline-agent-setup.js",
     "redline-extension-status": "setup/redline-agent-setup.js",
-    "redline-sidecar": ".claude-plugins/redline/bin/redline-sidecar",
-    "redline-pull": ".claude-plugins/redline/bin/redline-pull",
-    "redline-watch": ".claude-plugins/redline/bin/redline-watch",
-    "redline-tail": ".claude-plugins/redline/bin/redline-tail",
-    "redline-clear": ".claude-plugins/redline/bin/redline-clear"
+    "redline-sidecar": "runtime/bin/redline-sidecar",
+    "redline-pull": "runtime/bin/redline-pull",
+    "redline-watch": "runtime/bin/redline-watch",
+    "redline-tail": "runtime/bin/redline-tail",
+    "redline-clear": "runtime/bin/redline-clear"
   },
   "files": [
     "setup/",
-    ".claude-plugins/",
-    ".claude-plugin/",
-    "plugins/",
+    "runtime/",
+    "skills/",
     "extension/",
     "docs/assets/"
   ],
   "scripts": {
-    "check:syntax": "node -c plugins/redline/server.js && node -c .claude-plugins/redline/server.js && node -c setup/redline-agent-setup.js && node -c setup/redline.js && node -c setup/sync-versions.js && node -c extension/auth.js && node -c extension/background.js && node -c extension/content.js && node -c extension/popup.js",
+    "check:syntax": "node -c runtime/server.js && node -c setup/redline-agent-setup.js && node -c setup/redline.js && node -c setup/sync-versions.js && node -c extension/auth.js && node -c extension/background.js && node -c extension/content.js && node -c extension/popup.js",
     "check:versions": "node setup/sync-versions.js --check",
     "test": "node --test tests/*.test.js",
     "release": "npx changeset publish",

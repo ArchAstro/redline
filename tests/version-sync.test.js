@@ -22,9 +22,6 @@ test('release version command synchronizes every public manifest', () => {
     for (const relativePath of [
       'package.json',
       'extension/manifest.json',
-      '.claude-plugins/redline/.claude-plugin/plugin.json',
-      'plugins/redline/.codex-plugin/plugin.json',
-      '.claude-plugin/marketplace.json',
     ]) {
       const destination = path.join(temp, relativePath);
       fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -37,11 +34,6 @@ test('release version command synchronizes every public manifest', () => {
     const result = spawnSync(process.execPath, [SYNC, '--root', temp], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(readJson(temp, 'extension/manifest.json').version, '9.8.7');
-    assert.equal(readJson(temp, '.claude-plugins/redline/.claude-plugin/plugin.json').version, '9.8.7');
-    assert.equal(readJson(temp, 'plugins/redline/.codex-plugin/plugin.json').version, '9.8.7');
-    const marketplace = readJson(temp, '.claude-plugin/marketplace.json');
-    assert.equal(marketplace.metadata.version, '9.8.7');
-    assert.ok(marketplace.plugins.every(({ version }) => version === '9.8.7'));
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

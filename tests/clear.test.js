@@ -12,7 +12,7 @@ test('redline-clear removes the database and captured screenshots', () => {
     fs.writeFileSync(path.join(dir, 'redlines.json'), '[]');
     fs.writeFileSync(path.join(dir, 'screenshots', 'ss_test.png'), 'png');
 
-    const result = spawnSync('bash', ['.claude-plugins/redline/bin/redline-clear'], {
+    const result = spawnSync('bash', ['runtime/bin/redline-clear'], {
       cwd: path.resolve(__dirname, '..'),
       env: { ...process.env, REDLINE_DIR: dir },
       encoding: 'utf8',
@@ -37,7 +37,7 @@ test('redline-clear exits nonzero and does not claim success when cleanup fails'
     fs.writeFileSync(fakeRm, `#!/usr/bin/env bash\ncase "$*" in *screenshots*) exit 1;; *) exec /bin/rm "$@";; esac\n`);
     fs.chmodSync(fakeRm, 0o755);
 
-    const result = spawnSync('bash', ['.claude-plugins/redline/bin/redline-clear'], {
+    const result = spawnSync('bash', ['runtime/bin/redline-clear'], {
       cwd: path.resolve(__dirname, '..'),
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, REDLINE_DIR: dir },
       encoding: 'utf8',

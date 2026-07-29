@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
 const SETUP = path.join(ROOT, 'setup/redline-agent-setup.js');
-const BIN_DIR = path.join(ROOT, '.claude-plugins/redline/bin');
+const BIN_DIR = path.join(ROOT, 'runtime/bin');
 
 const COMMANDS = {
   start: ['redline-sidecar', ['start']],
@@ -26,7 +26,7 @@ function printHelp() {
   process.stdout.write(`Redline
 
 Quick start:
-  redline setup      Install/update Claude Code, Codex, and extension files
+  redline setup      Sync local Chrome extension files
   redline setup --with-screenshots
                      Enable full visual redlines on normal websites
   redline start      Start the local sidecar
@@ -34,7 +34,7 @@ Quick start:
   redline pull       Print pending redlines for your agent
 
 Common commands:
-  setup [flags]      Run the installer. Example: redline setup --dry-run
+  setup [flags]      Configure the extension. Example: redline setup --dry-run
                      Use --with-screenshots for screenshots and all http/https pages
                      Use --local-only to switch back to low-permission local pages
   status             Run Chrome extension and sidecar diagnostics

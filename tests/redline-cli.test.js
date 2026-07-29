@@ -45,13 +45,13 @@ test('redline status routes to extension diagnostics', () => {
   }
 });
 
-test('redline setup routes to installer', () => {
+test('redline setup routes to extension setup', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-cli-setup-'));
   try {
-    const result = runRedline(['setup', '--dry-run', '--plugin-source', ROOT], home);
+    const result = runRedline(['setup', '--dry-run', '--source', ROOT], home);
 
     assert.equal(result.status, 0);
-    assert.match(result.stdout, /Redline install \(dry run\)/);
+    assert.match(result.stdout, /Redline extension setup \(dry run\)/);
     assert.match(result.stdout, /Chrome/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
