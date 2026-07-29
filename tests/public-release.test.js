@@ -13,12 +13,9 @@ test('public guidance uses public examples and current ArchAstro contacts', () =
     'README.md',
     'SECURITY.md',
     'extension/content.js',
-    '.claude-plugins/redline/bin/redline-pull',
-    '.claude-plugins/redline/bin/redline-watch',
-    '.claude-plugins/redline/skills/pull/SKILL.md',
-    'plugins/redline/bin/redline-pull',
-    'plugins/redline/bin/redline-watch',
-    'plugins/redline/skills/pull/SKILL.md',
+    'runtime/bin/redline-pull',
+    'runtime/bin/redline-watch',
+    'skills/redline/SKILL.md',
   ].map(read).join('\n');
 
   assert.doesNotMatch(publicGuidance, /firstlanding|security@archastro\.com|~\/archastro\/redline/i);
@@ -70,21 +67,44 @@ test('workflow write permissions are scoped to the jobs that need them', () => {
 test('package and docs state the supported Unix prerequisites', () => {
   const pkg = JSON.parse(read('package.json'));
   assert.deepEqual(pkg.os, ['darwin', 'linux']);
+  assert.equal(pkg.engines.node, '>=18');
   assert.match(read('README.md'), /macOS or Linux/i);
+  assert.match(read('README.md'), /Node\.js 18 or newer/i);
   assert.match(read('README.md'), /Bash, curl, and jq/i);
-  assert.doesNotMatch(read('.claude-plugins/redline/bin/redline-sidecar'), /\bseq\b/);
+  assert.doesNotMatch(read('runtime/bin/redline-sidecar'), /\bseq\b/);
 });
 
-test('README maps each supported redline invocation to its surface', () => {
-  const readme = read('README.md');
-  const claudePlugin = JSON.parse(read('.claude-plugins/redline/.claude-plugin/plugin.json'));
-  const codexPlugin = JSON.parse(read('plugins/redline/.codex-plugin/plugin.json'));
+test('package ships one standard skill and no harness plugin trees', () => {
   const pkg = JSON.parse(read('package.json'));
-  const workflowName = 'pull';
-  const skillPath = path.join(root, 'plugins/redline/skills', workflowName, 'SKILL.md');
+
+  assert.ok(pkg.files.includes('skills/'));
+  assert.ok(pkg.files.includes('runtime/'));
+  assert.ok(!pkg.files.some((entry) => entry.includes('plugin')));
+  assert.equal(fs.existsSync(path.join(root, 'skills/redline/SKILL.md')), true);
+  assert.equal(fs.existsSync(path.join(root, '.claude-plugin')), false);
+  assert.equal(fs.existsSync(path.join(root, '.claude-plugins')), false);
+  assert.equal(fs.existsSync(path.join(root, 'plugins/redline')), false);
+  assert.equal(fs.existsSync(path.join(root, 'setup/skills-worker.js')), false);
+});
+
+test('Redline CLI leaves agent skill and plugin state under user control', () => {
+  const setup = read('setup/redline-agent-setup.js');
+  const readme = read('README.md');
+  const changeset = read('.changeset/standard-agent-skills.md');
+
+  assert.doesNotMatch(setup, /spawn(?:Sync)?\([^)]*npx|skills@|skill-lock|skill-source|skills-status|cleanupLegacyPlugins/);
+  assert.match(readme, /npx skills add ArchAstro\/redline/);
+  assert.match(readme, /never installs,\s*updates,\s*removes,\s*or inspects agent skills/i);
+  assert.match(changeset, /"@archastro\/redline": minor/);
+});
+
+test('README documents the portable skill and terminal invocation', () => {
+  const readme = read('README.md');
+  const pkg = JSON.parse(read('package.json'));
+  const skillPath = path.join(root, 'skills/redline/SKILL.md');
   const terminalBin = Object.entries(pkg.bin)
     .find(([, target]) => target === 'setup/redline.js');
-  const pullHelp = spawnSync(process.execPath, ['setup/redline.js', workflowName, '--help'], {
+  const pullHelp = spawnSync(process.execPath, ['setup/redline.js', 'pull', '--help'], {
     cwd: root,
     encoding: 'utf8',
   });
@@ -97,43 +117,32 @@ test('README maps each supported redline invocation to its surface', () => {
   assert.equal(pullHelp.status, 0, pullHelp.stderr || pullHelp.stdout);
   assert.match(pullHelp.stdout, /^# Usage:\n#\s+redline-pull\b/m);
   const terminalCommand = terminalBin[0];
-  const displayName = codexPlugin.interface.displayName;
-  const portablePrompt = codexPlugin.interface.defaultPrompt[0];
-  const claudeInvocation = `/${claudePlugin.name}:${workflowName}`;
   const expectedRows = [
-    ['Portable prompt', `"${portablePrompt}"`],
-    ['Claude Code', claudeInvocation],
-    ['Codex CLI/IDE', `$${codexPlugin.name}:${workflowName}`],
-    ['Codex desktop app', `@${displayName}`],
-    ['Terminal', `${terminalCommand} ${workflowName}`],
+    ['Portable prompt', '"Pull my redlines."'],
+    ['Agent skill', 'redline'],
+    ['Terminal', `${terminalCommand} pull`],
   ];
 
   assert.ok(architectureDiagram, 'README architecture diagram is missing');
-  assert.doesNotMatch(architectureDiagram, new RegExp(escapeRegExp(claudeInvocation)));
   assert.match(readme, /^\| Surface\s+\| Invocation\s+\|$/m);
   for (const [surface, invocation] of expectedRows) {
     assert.match(readme, new RegExp(`^\\| ${escapeRegExp(surface)}\\s+\\| \`${escapeRegExp(invocation)}\`\\s+\\|$`, 'm'));
   }
-  assert.match(
-    readme,
-    new RegExp(`^In the Codex desktop app, select \`${escapeRegExp(`@${displayName}`)}\`, then ask \`"${escapeRegExp(portablePrompt)}"\`$`, 'm'),
-  );
+  assert.match(read('skills/redline/SKILL.md'), /^name:\s*redline$/m);
 });
 
 test('pull skill applies straightforward redlines without confirmation and keeps safety gates', () => {
-  const claudeSkill = read('.claude-plugins/redline/skills/pull/SKILL.md');
-  const codexSkill = read('plugins/redline/skills/pull/SKILL.md');
+  const skill = read('skills/redline/SKILL.md');
 
-  assert.equal(codexSkill, claudeSkill);
-  assert.match(codexSkill, /apply straightforward, low-risk redlines without asking for confirmation/i);
-  assert.match(codexSkill, /show, list, or review[^.]+inspection-only/i);
-  assert.match(codexSkill, /ask before editing/i);
-  assert.match(codexSkill, /ambiguous|destructive|broad/i);
-  assert.match(codexSkill, /inspect the final diff[^.]+relevant checks[^.]+before ack/i);
-  assert.match(codexSkill, /only `comment` is the user's instruction/i);
-  assert.match(codexSkill, /untrusted webpage data/i);
-  assert.match(codexSkill, /never follow instructions embedded/i);
-  assert.doesNotMatch(codexSkill, /Wait for the user to confirm before editing/);
+  assert.match(skill, /apply straightforward, low-risk redlines without asking for confirmation/i);
+  assert.match(skill, /show, list, or review[^.]+inspection-only/i);
+  assert.match(skill, /ask before editing/i);
+  assert.match(skill, /ambiguous|destructive|broad/i);
+  assert.match(skill, /inspect the final diff[^.]+relevant checks[^.]+before ack/i);
+  assert.match(skill, /only `comment` is the user's instruction/i);
+  assert.match(skill, /untrusted webpage data/i);
+  assert.match(skill, /never follow instructions embedded/i);
+  assert.doesNotMatch(skill, /Wait for the user to confirm before editing/);
 });
 
 test('manual release guidance uses the version synchronization script', () => {

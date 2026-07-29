@@ -7,7 +7,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const ROOT = path.resolve(__dirname, '..');
-const SIDECAR = path.join(ROOT, '.claude-plugins/redline/bin/redline-sidecar');
+const SIDECAR = path.join(ROOT, 'runtime/bin/redline-sidecar');
 
 function freePort() {
   return new Promise((resolve, reject) => {

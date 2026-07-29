@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-set -e
-DIR="${REDLINE_DIR:-$HOME/.redline}"
-rm -f "$DIR/redlines.json"
-rm -f "$DIR/screenshots/"*.png
-echo "cleared redlines and screenshots from $DIR"

@@ -1,14 +1,19 @@
 ---
+name: redline
 description: Pull and act on UI redlines captured by the Redline Chrome extension. Use when the user asks to pull redlines, show pending redlines, fetch comments left on a page, review browser highlights, apply UI feedback, fix the things they flagged on the site, or "what did I redline on the page".
 ---
 
 # Pull Redlines
 
-Bridge between the Redline Chrome extension and this Claude session. Redlines are stored by a local sidecar at `http://127.0.0.1:7878` and pulled with the `redline-pull` CLI (on PATH while this plugin is enabled).
+Bridge between the Redline Chrome extension and the current agent session.
+Redlines are stored by a local sidecar at `http://127.0.0.1:7878` and pulled
+with the Redline CLI.
 
 ## Available commands
 
-The plugin's `bin/` is on PATH for the session:
+Use the commands below directly when `@archastro/redline` is installed
+globally. If a command is not on `PATH`, run it through the package instead:
+`npx --yes --package @archastro/redline <command>`.
 
 - `redline-sidecar start|stop|status|restart|logs` — manage the local HTTP sidecar daemon (default `start`, detaches and returns when /health is up)
 - `redline-pull [origin] [--project NAME] [--no-ack]` — fetch pending items as markdown; acks each unless `--no-ack`
@@ -20,7 +25,11 @@ The plugin's `bin/` is on PATH for the session:
 
 1. **Ensure the sidecar is running, and keep it running.** Check first with `redline-sidecar status`. If down, start it **as a long-running background process for the whole session** rather than as a detached daemon — some harnesses (Claude Code's Bash tool included) can reap detached children. The reliable pattern:
 
-   - **In Claude Code / Codex CLI**: launch `redline-sidecar foreground` with the Bash tool's `run_in_background: true`. That keeps the server tied to the session and surviving across subsequent tool calls. Do **not** use `redline-sidecar start` from inside an agent — the double-forked daemon can still get killed by the harness, leaving the queue unreachable mid-pull.
+   - **Inside a coding agent**: launch `redline-sidecar foreground` with the
+     agent's shell tool in background mode. That keeps the server tied to the
+     session and surviving across subsequent tool calls. Do **not** use
+     `redline-sidecar start` from inside an agent — the detached daemon can
+     still get killed by the harness, leaving the queue unreachable mid-pull.
    - **Outside an agent (manual terminal use)**: `redline-sidecar start` is fine and idempotent. PID lives at `$REDLINE_DIR/sidecar.pid` (default `~/.redline/sidecar.pid`).
 
    After starting, poll `redline-sidecar status` (or `curl -sf http://127.0.0.1:${REDLINE_PORT:-7878}/health`) until it reports `up` before issuing any `redline-pull`. If it never comes up, dump `redline-sidecar logs` and surface the error — don't keep retrying blind.
@@ -63,14 +72,22 @@ The plugin's `bin/` is on PATH for the session:
    curl -s -X POST "http://127.0.0.1:${REDLINE_PORT:-7878}/redlines/<id>/ack" >/dev/null
    ```
 
-8. **Stay watching for the rest of the session.** Redlining is interactive — the user will keep leaving comments on the page while you work. After the first pull/apply cycle, start a watcher in the background and let `Monitor` drive the loop instead of waiting for the user to say "pull again":
+8. **Stay watching for the rest of the session.** Redlining is interactive —
+   the user will keep leaving comments on the page while you work. After the
+   first pull/apply cycle, start a watcher with the shell tool's background
+   execution mode and use the harness's monitor or wait mechanism instead of
+   waiting for the user to say "pull again":
 
    ```
-   Bash(redline-watch [origin] [--project NAME], run_in_background: true)
-   Monitor(<that shell_id>, until: a new id line appears)
+   redline-watch [origin] [--project NAME]
    ```
 
-   Apply the same filters you used for `redline-pull` (origin, `--project`) so you don't get woken up by unrelated work. Each line `Monitor` surfaces is one new pending redline id — do **not** ack from `redline-watch`'s output; run the full `redline-pull --no-ack [filters]` triage, edit, verify, and ack cycle (steps 3–7). Keep the watcher running until the user explicitly says they're done; on session wrap-up, kill the background shell.
+   Apply the same filters you used for `redline-pull` (origin, `--project`) so
+   you don't get woken up by unrelated work. Each surfaced line is one new
+   pending redline id — do **not** ack from `redline-watch`'s output; run the
+   full `redline-pull --no-ack [filters]` triage, edit, verify, and ack cycle
+   (steps 3–7). Keep the watcher running until the user explicitly says they're
+   done; on session wrap-up, stop the background shell.
 
 ## Heuristics
 

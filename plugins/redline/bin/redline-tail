@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-PORT="${REDLINE_PORT:-7878}"
-curl -s "http://127.0.0.1:$PORT/redlines" | (command -v jq >/dev/null && jq . || cat)

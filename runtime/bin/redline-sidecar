@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 # Resolve symlinks (e.g. the PATH shim at /opt/homebrew/bin/redline-sidecar)
-# so $HERE points at the real plugin install, not the symlink's parent.
+# so $HERE points at the real package install, not the symlink's parent.
 SCRIPT="$0"
 while [ -L "$SCRIPT" ]; do
   link="$(readlink "$SCRIPT")"

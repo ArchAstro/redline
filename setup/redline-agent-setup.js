@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Install / update / uninstall the Redline plugin into local Claude Code
-// and / or Codex. Designed to be run via:
+// Install / update / uninstall the Redline Chrome extension.
+// Designed to be run via:
 //
 //   npx -p @archastro/redline redline-agent-setup
 //
@@ -14,12 +14,7 @@ const http = require('http');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
-const MARKETPLACE = 'redline';
-const PLUGIN = 'redline';
-const PLUGIN_KEY = `${PLUGIN}@${MARKETPLACE}`;
 const FULL_ACCESS_PATTERN = '<all_urls>';
-
-const HARNESSES = ['claude', 'codex'];
 
 const ANSI = {
   reset: '\x1b[0m',
@@ -50,11 +45,9 @@ function fail(msg) {
 
 function parseArgs(argv) {
   const opts = {
-    claudeOnly: false,
-    codexOnly: false,
     uninstall: false,
     dryRun: false,
-    pluginSource: null,
+    source: null,
     help: false,
     extensionStatus: false,
     withScreenshots: false,
@@ -67,25 +60,27 @@ function parseArgs(argv) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     switch (a) {
-      case '--claude-only': opts.claudeOnly = true; break;
-      case '--codex-only': opts.codexOnly = true; break;
+      case '--claude-only':
+      case '--codex-only':
+        fail(`${a} was removed; manage agent skills directly with npx skills`);
+        break;
       case '--uninstall': case '--remove': opts.uninstall = true; break;
       case '--dry-run': opts.dryRun = true; break;
       case '--extension-status': opts.extensionStatus = true; break;
       case '--with-screenshots': opts.withScreenshots = true; break;
       case '--local-only': opts.localOnly = true; break;
-      case '--plugin-source': opts.pluginSource = args[++i]; break;
+      case '--source':
+      case '--plugin-source': opts.source = args[++i]; break;
       case '-h': case '--help': opts.help = true; break;
       default:
-        if (a.startsWith('--plugin-source=')) {
-          opts.pluginSource = a.slice('--plugin-source='.length);
+        if (a.startsWith('--source=')) {
+          opts.source = a.slice('--source='.length);
+        } else if (a.startsWith('--plugin-source=')) {
+          opts.source = a.slice('--plugin-source='.length);
         } else {
           fail(`unknown arg: ${a} (try --help)`);
         }
     }
-  }
-  if (opts.claudeOnly && opts.codexOnly) {
-    fail('pass at most one of --claude-only and --codex-only');
   }
   if (opts.withScreenshots && opts.localOnly) {
     fail('pass at most one of --with-screenshots and --local-only');
@@ -94,15 +89,11 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  log(`redline-agent-setup — install Redline into Claude Code and/or Codex
+  log(`redline-agent-setup — configure the Redline Chrome extension
 
 Usage:
-  redline-agent-setup                # install for any harness present
-  redline-agent-setup --claude-only  # only install the Claude plugin
-  redline-agent-setup --codex-only   # only install the Codex plugin
-  redline-agent-setup --uninstall    # remove both harnesses and the shared extension
-  redline-agent-setup --claude-only --uninstall
-                                   # remove one harness; keep the shared extension
+  redline-agent-setup                # sync the local Chrome extension
+  redline-agent-setup --uninstall    # remove the local Chrome extension
   redline-agent-setup --dry-run      # print what would change without writing
   redline-agent-setup --with-screenshots
                                    # enable full page access for screenshots
@@ -111,8 +102,11 @@ Usage:
                                    # check Chrome extension sync + sidecar
 
 Options:
-  --plugin-source PATH   Override the source dir (defaults to this npm package).
+  --source PATH          Override the package source dir (development/testing).
   -h, --help             Show this help.
+
+Agent skills are user-managed. Install or remove the Redline skill directly
+with the standard npx skills CLI.
 `);
 }
 
@@ -122,32 +116,11 @@ function resolvePackageRoot() {
   return path.resolve(__dirname, '..');
 }
 
-function missingRequiredCommands() {
-  return ['bash', 'curl', 'jq'].filter((command) => {
+function missingRequiredCommands(commands) {
+  return commands.filter((command) => {
     const result = spawnSync(command, ['--version'], { stdio: 'ignore' });
     return result.error || result.status !== 0;
   });
-}
-
-function resolvePluginRoot(harness, sourceRoot) {
-  if (harness === 'claude') return path.join(sourceRoot, '.claude-plugins', PLUGIN);
-  if (harness === 'codex') return path.join(sourceRoot, 'plugins', PLUGIN);
-  throw new Error(`unknown harness: ${harness}`);
-}
-
-function manifestPath(harness, pluginRoot) {
-  const sub = harness === 'claude' ? '.claude-plugin/plugin.json' : '.codex-plugin/plugin.json';
-  return path.join(pluginRoot, sub);
-}
-
-async function readVersion(harness, pluginRoot) {
-  const p = manifestPath(harness, pluginRoot);
-  const raw = await fsp.readFile(p, 'utf8');
-  const data = JSON.parse(raw);
-  if (typeof data.version !== 'string' || !data.version) {
-    throw new Error(`${p} is missing a version`);
-  }
-  return data.version;
 }
 
 async function exists(p) {
@@ -239,303 +212,6 @@ async function copyTree(src, dst, dryRun, transforms = {}, modeOverrides = {}) {
   }
   return changed;
 }
-
-async function pruneOtherVersions(versionedRoot, keep, dryRun) {
-  if (!(await exists(versionedRoot))) return false;
-  let changed = false;
-  for (const e of await fsp.readdir(versionedRoot, { withFileTypes: true })) {
-    if (!e.isDirectory() || e.name === keep) continue;
-    changed = true;
-    if (!dryRun) await fsp.rm(path.join(versionedRoot, e.name), { recursive: true, force: true });
-  }
-  return changed;
-}
-
-// ---------- Claude ----------
-
-async function installClaude(sourceRoot, dryRun) {
-  const pluginRoot = resolvePluginRoot('claude', sourceRoot);
-  if (!(await exists(pluginRoot))) throw new Error(`Claude plugin source missing at ${pluginRoot}`);
-  const marketplaceManifestSrc = path.join(sourceRoot, '.claude-plugin', 'marketplace.json');
-  if (!(await exists(marketplaceManifestSrc))) throw new Error(`marketplace.json missing at ${marketplaceManifestSrc}`);
-  const version = await readVersion('claude', pluginRoot);
-  const home = os.homedir();
-  const versionedRoot = path.join(home, '.claude', 'plugins', 'cache', MARKETPLACE, PLUGIN);
-  const installRoot = path.join(versionedRoot, version);
-  const registryPath = path.join(home, '.claude', 'plugins', 'installed_plugins.json');
-  const settingsPath = path.join(home, '.claude', 'settings.json');
-  const marketplaceRoot = path.join(home, '.claude', 'plugins', 'marketplaces', MARKETPLACE);
-  const marketplaceManifestDest = path.join(marketplaceRoot, '.claude-plugin', 'marketplace.json');
-  const marketplacePluginDest = path.join(marketplaceRoot, '.claude-plugins', PLUGIN);
-  const knownMarketplacesPath = path.join(home, '.claude', 'plugins', 'known_marketplaces.json');
-  // Parse every shared JSON file before changing the filesystem. A malformed
-  // harness config must never produce a partial install or get overwritten.
-  const known = (await readJsonOrNull(knownMarketplacesPath)) || {};
-  const settings = (await readJsonOrNull(settingsPath)) || {};
-  const registry = (await readJsonOrNull(registryPath)) || {};
-
-  const pruned = await pruneOtherVersions(versionedRoot, version, dryRun);
-  const filesChanged = await copyTree(pluginRoot, installRoot, dryRun);
-
-  // Materialize the marketplace under ~/.claude/plugins/marketplaces/<MARKETPLACE>/
-  // so Claude can resolve `redline@redline` — without this the plugin shows up as
-  // installed but errors with `Plugin "redline" not found in marketplace "redline"`.
-  const manifestBuf = await fsp.readFile(marketplaceManifestSrc);
-  const manifestChanged = await writeFileIfChanged(marketplaceManifestDest, manifestBuf.toString('utf8'), dryRun);
-  const marketplacePluginChanged = await copyTree(pluginRoot, marketplacePluginDest, dryRun);
-
-  // known_marketplaces.json — register as a local marketplace pointing at the dir above.
-  const now = new Date().toISOString();
-  const prevEntry = known[MARKETPLACE];
-  // Claude's schema renamed local-filesystem marketplaces from `local` → `directory`
-  // (Claude Code >= 2.1.x). Older installs of this setup wrote `source: 'local'`,
-  // which is now rejected and corrupts /plugin entirely. We always write the
-  // current `directory` form so re-running the setup heals a broken state.
-  const prevSame = prevEntry
-    && prevEntry.source && prevEntry.source.source === 'directory' && prevEntry.source.path === marketplaceRoot
-    && prevEntry.installLocation === marketplaceRoot;
-  const nextKnown = {
-    ...known,
-    [MARKETPLACE]: {
-      source: { source: 'directory', path: marketplaceRoot },
-      installLocation: marketplaceRoot,
-      lastUpdated: prevSame ? prevEntry.lastUpdated : now,
-    },
-  };
-  const knownChanged = await writeFileIfChanged(knownMarketplacesPath, JSON.stringify(nextKnown, null, 2) + '\n', dryRun);
-
-  // settings.json — set enabledPlugins["redline@redline"] = true
-  const enabledPlugins = (settings.enabledPlugins && typeof settings.enabledPlugins === 'object' && !Array.isArray(settings.enabledPlugins))
-    ? { ...settings.enabledPlugins } : {};
-  enabledPlugins[PLUGIN_KEY] = true;
-  const nextSettings = { ...settings, enabledPlugins };
-  const settingsChanged = await writeFileIfChanged(settingsPath, JSON.stringify(nextSettings, null, 2) + '\n', dryRun);
-
-  // installed_plugins.json — append or upsert the user-scope entry
-  const plugins = (registry.plugins && typeof registry.plugins === 'object' && !Array.isArray(registry.plugins))
-    ? { ...registry.plugins } : {};
-  const entries = Array.isArray(plugins[PLUGIN_KEY]) ? [...plugins[PLUGIN_KEY]] : [];
-  const idx = entries.findIndex((e) => e && e.scope === 'user' && !e.projectPath);
-  const previous = idx >= 0 ? entries[idx] : null;
-  const prevInstalledAt = typeof previous?.installedAt === 'string' ? previous.installedAt : now;
-  const unchangedInstall = previous?.installPath === installRoot && previous?.version === version;
-  const next = {
-    scope: 'user',
-    installPath: installRoot,
-    version,
-    installedAt: prevInstalledAt,
-    lastUpdated: unchangedInstall && typeof previous.lastUpdated === 'string' ? previous.lastUpdated : now,
-  };
-  if (idx >= 0) entries[idx] = next; else entries.push(next);
-  const nextRegistry = {
-    ...registry,
-    version: typeof registry.version === 'number' ? registry.version : 2,
-    plugins: { ...plugins, [PLUGIN_KEY]: entries },
-  };
-  const registryChanged = await writeFileIfChanged(registryPath, JSON.stringify(nextRegistry, null, 2) + '\n', dryRun);
-
-  return {
-    harness: 'claude',
-    version,
-    changed: pruned || filesChanged || manifestChanged || marketplacePluginChanged || knownChanged || settingsChanged || registryChanged,
-    paths: { installRoot, marketplaceRoot, knownMarketplacesPath, settingsPath, registryPath },
-  };
-}
-
-async function uninstallClaude(dryRun) {
-  const home = os.homedir();
-  const cacheRoot = path.join(home, '.claude', 'plugins', 'cache', MARKETPLACE);
-  const marketplaceRoot = path.join(home, '.claude', 'plugins', 'marketplaces', MARKETPLACE);
-  const knownMarketplacesPath = path.join(home, '.claude', 'plugins', 'known_marketplaces.json');
-  const registryPath = path.join(home, '.claude', 'plugins', 'installed_plugins.json');
-  const settingsPath = path.join(home, '.claude', 'settings.json');
-  let changed = false;
-
-  if (await exists(cacheRoot)) {
-    changed = true;
-    if (!dryRun) await fsp.rm(cacheRoot, { recursive: true, force: true });
-  }
-  if (await exists(marketplaceRoot)) {
-    changed = true;
-    if (!dryRun) await fsp.rm(marketplaceRoot, { recursive: true, force: true });
-  }
-
-  const known = await readJsonOrNull(knownMarketplacesPath);
-  if (known && MARKETPLACE in known) {
-    const { [MARKETPLACE]: _, ...rest } = known;
-    changed = (await writeFileIfChanged(knownMarketplacesPath, JSON.stringify(rest, null, 2) + '\n', dryRun)) || changed;
-  }
-
-  const settings = await readJsonOrNull(settingsPath);
-  if (settings && settings.enabledPlugins && PLUGIN_KEY in settings.enabledPlugins) {
-    const { [PLUGIN_KEY]: _, ...rest } = settings.enabledPlugins;
-    const nextSettings = { ...settings, enabledPlugins: rest };
-    changed = (await writeFileIfChanged(settingsPath, JSON.stringify(nextSettings, null, 2) + '\n', dryRun)) || changed;
-  }
-
-  const registry = await readJsonOrNull(registryPath);
-  if (registry && registry.plugins && PLUGIN_KEY in registry.plugins) {
-    const { [PLUGIN_KEY]: _, ...rest } = registry.plugins;
-    const nextRegistry = { ...registry, plugins: rest };
-    changed = (await writeFileIfChanged(registryPath, JSON.stringify(nextRegistry, null, 2) + '\n', dryRun)) || changed;
-  }
-
-  return { harness: 'claude', changed, paths: { cacheRoot, marketplaceRoot, knownMarketplacesPath, settingsPath, registryPath } };
-}
-
-// ---------- Codex ----------
-
-function upsertTomlSection(content, section, values) {
-  const header = `[${section}]`;
-  const lines = content ? content.split(/\r?\n/) : [];
-  const start = lines.findIndex((l) => l.trim() === header);
-  if (start === -1) {
-    const prefix = lines.length > 0 && lines[lines.length - 1] !== '' ? [''] : [];
-    return [
-      ...lines,
-      ...prefix,
-      header,
-      ...Object.entries(values).map(([k, v]) => `${k} = ${v}`),
-      '',
-    ].join('\n');
-  }
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^\s*\[.*\]\s*$/.test(lines[i])) { end = i; break; }
-  }
-  const sectionLines = lines.slice(start + 1, end);
-  for (const [k, v] of Object.entries(values)) {
-    const re = new RegExp(`^\\s*${k.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\s*=`);
-    const idx = sectionLines.findIndex((l) => re.test(l));
-    if (idx >= 0) sectionLines[idx] = `${k} = ${v}`;
-    else sectionLines.push(`${k} = ${v}`);
-  }
-  return [...lines.slice(0, start + 1), ...sectionLines, ...lines.slice(end)].join('\n');
-}
-
-function removeTomlSection(content, section) {
-  const header = `[${section}]`;
-  const lines = content.split(/\r?\n/);
-  const start = lines.findIndex((l) => l.trim() === header);
-  if (start === -1) return { content, changed: false };
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^\s*\[.*\]\s*$/.test(lines[i])) { end = i; break; }
-  }
-  while (end < lines.length && lines[end] === '') end++;
-  const next = [...lines.slice(0, start), ...lines.slice(end)].join('\n');
-  return { content: next, changed: true };
-}
-
-function tomlString(v) { return JSON.stringify(v); }
-
-async function installCodex(sourceRoot, dryRun) {
-  const pluginRoot = resolvePluginRoot('codex', sourceRoot);
-  if (!(await exists(pluginRoot))) throw new Error(`Codex plugin source missing at ${pluginRoot}`);
-  const canonicalServerPath = path.join(resolvePluginRoot('claude', sourceRoot), 'server.js');
-  if (!(await exists(canonicalServerPath))) throw new Error(`Canonical server source missing at ${canonicalServerPath}`);
-  const canonicalServer = await fsp.readFile(canonicalServerPath, 'utf8');
-  const installTransforms = { 'server.js': () => canonicalServer };
-  const version = await readVersion('codex', pluginRoot);
-  const home = os.homedir();
-  const codexRoot = path.join(home, '.codex');
-  const configPath = path.join(codexRoot, 'config.toml');
-  const versionedRoot = path.join(codexRoot, 'plugins', 'cache', MARKETPLACE, PLUGIN);
-  const cacheRoot = path.join(versionedRoot, version);
-  const marketplaceRoot = path.join(home, '.agents', 'plugins');
-  const marketplacePluginRoot = path.join(marketplaceRoot, 'plugins', PLUGIN);
-  const marketplacePath = path.join(marketplaceRoot, 'marketplace.json');
-
-  const existingMarketplace = await readJsonOrNull(marketplacePath);
-  const redlineEntry = {
-    name: PLUGIN,
-    source: { source: 'local', path: `./plugins/${PLUGIN}` },
-    policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' },
-    category: 'Development',
-  };
-  const marketplace = {
-    ...(existingMarketplace || {}),
-    name: existingMarketplace?.name || MARKETPLACE,
-    interface: existingMarketplace?.interface || { displayName: 'Redline' },
-    plugins: [
-      ...(Array.isArray(existingMarketplace?.plugins)
-        ? existingMarketplace.plugins.filter((plugin) => plugin?.name !== PLUGIN)
-        : []),
-      redlineEntry,
-    ],
-  };
-
-  const pruned = await pruneOtherVersions(versionedRoot, version, dryRun);
-  const cacheChanged = await copyTree(pluginRoot, cacheRoot, dryRun, installTransforms);
-  const marketplaceFilesChanged = await copyTree(pluginRoot, marketplacePluginRoot, dryRun, installTransforms);
-  const marketplaceChanged = await writeFileIfChanged(marketplacePath, JSON.stringify(marketplace, null, 2) + '\n', dryRun);
-
-  let configContent = (await exists(configPath)) ? await fsp.readFile(configPath, 'utf8') : '';
-  let next = upsertTomlSection(configContent, `plugins."${PLUGIN_KEY}"`, { enabled: 'true' });
-  next = upsertTomlSection(next, `marketplaces.${MARKETPLACE}`, {
-    source_type: tomlString('local'),
-    source: tomlString(marketplaceRoot),
-  });
-  if (!next.endsWith('\n')) next += '\n';
-  const configChanged = await writeFileIfChanged(configPath, next, dryRun);
-
-  return {
-    harness: 'codex',
-    version,
-    changed: pruned || cacheChanged || marketplaceFilesChanged || marketplaceChanged || configChanged,
-    paths: { cacheRoot, marketplacePath, configPath },
-  };
-}
-
-async function uninstallCodex(dryRun) {
-  const home = os.homedir();
-  const codexRoot = path.join(home, '.codex');
-  const cacheRoot = path.join(codexRoot, 'plugins', 'cache', MARKETPLACE, PLUGIN);
-  const marketplaceRoot = path.join(home, '.agents', 'plugins');
-  const marketplacePluginRoot = path.join(marketplaceRoot, 'plugins', PLUGIN);
-  const marketplacePath = path.join(marketplaceRoot, 'marketplace.json');
-  const configPath = path.join(codexRoot, 'config.toml');
-  let changed = false;
-
-  // Parse shared state before removing anything so malformed JSON cannot leave
-  // Codex in a partially uninstalled state.
-  const marketplace = await readJsonOrNull(marketplacePath);
-  const marketplacePlugins = Array.isArray(marketplace?.plugins) ? marketplace.plugins : [];
-  const remainingPlugins = marketplacePlugins.filter((plugin) => plugin?.name !== PLUGIN);
-
-  if (await exists(cacheRoot)) {
-    changed = true;
-    if (!dryRun) await fsp.rm(cacheRoot, { recursive: true, force: true });
-  }
-  if (await exists(marketplacePluginRoot)) {
-    changed = true;
-    if (!dryRun) await fsp.rm(marketplacePluginRoot, { recursive: true, force: true });
-  }
-  if (marketplace && remainingPlugins.length !== marketplacePlugins.length) {
-    const nextMarketplace = { ...marketplace, plugins: remainingPlugins };
-    changed = (await writeFileIfChanged(
-      marketplacePath,
-      JSON.stringify(nextMarketplace, null, 2) + '\n',
-      dryRun,
-    )) || changed;
-  }
-  if (await exists(configPath)) {
-    let config = await fsp.readFile(configPath, 'utf8');
-    const before = config;
-    config = removeTomlSection(config, `plugins."${PLUGIN_KEY}"`).content;
-    if (remainingPlugins.length === 0) {
-      config = removeTomlSection(config, `marketplaces.${MARKETPLACE}`).content;
-    }
-    if (config !== before) {
-      changed = true;
-      if (!dryRun) await fsp.writeFile(configPath, config.endsWith('\n') ? config : config + '\n');
-    }
-  }
-
-  return { harness: 'codex', changed, paths: { cacheRoot, marketplacePluginRoot, marketplacePath, configPath } };
-}
-
-// ---------- Main ----------
 
 function redlineRoot() {
   return path.join(os.homedir(), '.redline');
@@ -775,10 +451,12 @@ async function extensionStatus(sourceRoot) {
 
 async function main() {
   const opts = parseArgs(process.argv);
-  if (opts.help) { printHelp(); return; }
+  if (opts.help) {
+    printHelp();
+    return;
+  }
 
-  const targets = opts.claudeOnly ? ['claude'] : opts.codexOnly ? ['codex'] : HARNESSES;
-  const sourceRoot = opts.pluginSource ? path.resolve(opts.pluginSource) : resolvePackageRoot();
+  const sourceRoot = opts.source ? path.resolve(opts.source) : resolvePackageRoot();
 
   if (opts.extensionStatus) {
     const ok = await extensionStatus(sourceRoot);
@@ -788,80 +466,51 @@ async function main() {
 
   if (!opts.uninstall) {
     const extensionSource = path.join(sourceRoot, 'extension');
-    if (!(await exists(extensionSource))) fail(`Chrome extension source missing at ${extensionSource}`);
-  }
-
-  const extensionMode = opts.uninstall ? null : await resolveExtensionMode(opts);
-
-  if (!opts.uninstall && !opts.dryRun) {
-    const missing = missingRequiredCommands();
-    if (missing.length) {
-      fail(`missing required commands: ${missing.join(', ')}. Redline supports macOS and Linux with Bash, curl, and jq installed.`);
+    if (!(await exists(extensionSource))) {
+      fail(`Chrome extension source missing at ${extensionSource}`);
     }
   }
 
-  log(color('bold', `Redline ${opts.uninstall ? 'uninstall' : 'install'}${opts.dryRun ? ' (dry run)' : ''}`));
+  const extensionMode = opts.uninstall ? null : await resolveExtensionMode(opts);
+  if (!opts.dryRun && !opts.uninstall) {
+    const missing = missingRequiredCommands(['bash', 'curl', 'jq']);
+    if (missing.length) {
+      fail(`missing required commands: ${missing.join(', ')}. Redline requires Bash, curl, and jq for runtime use.`);
+    }
+  }
+
+  log(color('bold', `Redline extension ${opts.uninstall ? 'uninstall' : 'setup'}${opts.dryRun ? ' (dry run)' : ''}`));
   log(color('dim', `source: ${sourceRoot}`));
   if (!opts.uninstall) {
     log(color('dim', `extension mode: ${extensionModeLabel(extensionMode)}`));
   }
   log('');
 
-  const failures = [];
-
-  for (const h of targets) {
-    try {
-      const r = opts.uninstall
-        ? (h === 'claude' ? await uninstallClaude(opts.dryRun) : await uninstallCodex(opts.dryRun))
-        : (h === 'claude' ? await installClaude(sourceRoot, opts.dryRun) : await installCodex(sourceRoot, opts.dryRun));
-      const label = `${h}:`;
-      if (!r.changed) {
-        log(`  ${color('dim', label)} ${color('dim', opts.uninstall ? 'nothing to remove' : 'already up to date')}`);
-      } else {
-        log(`  ${color('green', label)} ${opts.uninstall ? 'removed' : `installed v${r.version}`}`);
-        for (const [k, v] of Object.entries(r.paths)) {
-          log(color('dim', `    ${k}: ${v}`));
-        }
-      }
-    } catch (e) {
-      warn(`${h}: ${e.message}`);
-      failures.push(h);
-    }
-  }
-
   try {
-    const scopedUninstall = opts.uninstall && (opts.claudeOnly || opts.codexOnly);
-    const r = opts.uninstall
-      ? (scopedUninstall
-          ? { harness: 'extension', changed: false, paths: {} }
-          : await uninstallExtension(opts.dryRun))
+    const result = opts.uninstall
+      ? await uninstallExtension(opts.dryRun)
       : await syncExtension(sourceRoot, opts.dryRun, extensionMode);
-    if (r.changed) {
+    if (result.changed) {
       log(`  ${color('green', 'extension:')} ${opts.uninstall ? 'removed' : 'synced'}`);
-      for (const [k, v] of Object.entries(r.paths)) {
-        log(color('dim', `    ${k}: ${v}`));
+      for (const [key, value] of Object.entries(result.paths)) {
+        log(color('dim', `    ${key}: ${value}`));
       }
     } else {
       log(`  ${color('dim', 'extension:')} ${color('dim', opts.uninstall ? 'nothing to remove' : 'already up to date')}`);
     }
-  } catch (e) {
-    warn(`extension: ${e.message}`);
-    failures.push('extension');
-  }
-
-  log('');
-  if (failures.length) {
-    warn(`${opts.uninstall ? 'uninstall' : 'installation'} failed for: ${failures.join(', ')}`);
+  } catch (error) {
+    warn(`extension: ${error.message}`);
     process.exitCode = 1;
     return;
   }
+
   if (!opts.uninstall) {
+    log('');
     log(color('cyan', 'Next:'));
-    log('  1. Reload your Claude / Codex session.');
-    log('  2. Start the sidecar:    ' + color('bold', 'redline start'));
-    log('  3. Chrome → ' + color('bold', 'chrome://extensions') + ' → Load unpacked → pick ' + color('bold', path.join(redlineRoot(), 'extension')));
-    log('  4. If Redline was already loaded, click ' + color('bold', 'Reload') + ' on its extension card.');
-    log('  5. Then reload the page tabs you already had open so their content scripts update.');
+    log('  1. Start the sidecar:    ' + color('bold', 'redline start'));
+    log('  2. Chrome → ' + color('bold', 'chrome://extensions') + ' → Load unpacked → pick ' + color('bold', path.join(redlineRoot(), 'extension')));
+    log('  3. If Redline was already loaded, click ' + color('bold', 'Reload') + ' on its extension card.');
+    log('  4. Then reload the page tabs you already had open so their content scripts update.');
     log('');
     if (extensionMode === 'full') {
       log('  ' + color('green', 'screenshots: enabled') + ' — Redline works on any http/https page and captures page screenshots.');
@@ -871,8 +520,13 @@ async function main() {
       log('  For full visual redlines on normal websites, run: ' + color('bold', 'redline setup --with-screenshots'));
     }
     log('');
-    log('Check later with: ' + color('bold', 'redline status'));
+    log('Agent skills are unchanged. Manage the Redline skill directly with:');
+    log('  ' + color('bold', 'npx skills add ArchAstro/redline'));
+    log('');
+    log('Check the extension later with: ' + color('bold', 'redline status'));
   }
 }
 
-main().catch((e) => fail(e.stack || e.message));
+if (require.main === module) {
+  main().catch((error) => fail(error.stack || error.message));
+}

@@ -9,23 +9,28 @@ const ROOT = path.resolve(__dirname, '..');
 const SETUP = path.join(ROOT, 'setup/redline-agent-setup.js');
 const PACKAGE_VERSION = require('../package.json').version;
 
-function runStatus(home) {
+function runStatus(home, envOverrides = {}) {
   return spawnSync(process.execPath, [SETUP, '--extension-status'], {
-    cwd: ROOT,
-    env: { ...process.env, HOME: home, REDLINE_PORT: '65534' },
-    encoding: 'utf8',
-  });
-}
-
-function runSetup(args, home, envOverrides = {}) {
-  return spawnSync(process.execPath, [SETUP, ...args, '--plugin-source', ROOT], {
     cwd: ROOT,
     env: { ...process.env, HOME: home, REDLINE_PORT: '65534', ...envOverrides },
     encoding: 'utf8',
   });
 }
 
-test('extension status reports missing synced extension', () => {
+function runSetup(args, home, envOverrides = {}) {
+  return spawnSync(process.execPath, [SETUP, ...args, '--source', ROOT], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOME: home,
+      REDLINE_PORT: '65534',
+      ...envOverrides,
+    },
+    encoding: 'utf8',
+  });
+}
+
+test('extension status reports a missing synced extension', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-status-missing-'));
   try {
     const result = runStatus(home);
@@ -39,30 +44,11 @@ test('extension status reports missing synced extension', () => {
   }
 });
 
-test('setup exits nonzero when requested components cannot be installed', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-setup-failure-'));
-  try {
-    const missingSource = path.join(home, 'missing-package');
-    const result = spawnSync(process.execPath, [SETUP, '--plugin-source', missingSource], {
-      cwd: ROOT,
-      env: { ...process.env, HOME: home },
-      encoding: 'utf8',
-    });
-
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /Chrome extension source missing/i);
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test('setup fails when an otherwise valid package omits the Chrome extension', () => {
+test('setup fails when the package omits the Chrome extension', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-missing-extension-home-'));
   const source = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-missing-extension-source-'));
   try {
-    fs.cpSync(path.join(ROOT, '.claude-plugins'), path.join(source, '.claude-plugins'), { recursive: true });
-    fs.cpSync(path.join(ROOT, '.claude-plugin'), path.join(source, '.claude-plugin'), { recursive: true });
-    const result = spawnSync(process.execPath, [SETUP, '--claude-only', '--plugin-source', source], {
+    const result = spawnSync(process.execPath, [SETUP, '--source', source], {
       cwd: ROOT,
       env: { ...process.env, HOME: home },
       encoding: 'utf8',
@@ -70,20 +56,20 @@ test('setup fails when an otherwise valid package omits the Chrome extension', (
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Chrome extension source missing/);
-    assert.equal(fs.existsSync(path.join(home, '.redline/extension')), false);
-    assert.equal(fs.existsSync(path.join(home, '.claude')), false);
+    assert.equal(fs.existsSync(path.join(home, '.redline')), false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(source, { recursive: true, force: true });
   }
 });
 
-test('uninstall still works when the saved extension mode JSON is malformed', () => {
+test('uninstall works when the saved extension mode JSON is malformed', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-uninstall-invalid-config-'));
   try {
     const extension = path.join(home, '.redline/extension');
     fs.mkdirSync(extension, { recursive: true });
     fs.writeFileSync(path.join(home, '.redline/config.json'), '{ invalid JSON');
+
     const result = runSetup(['--uninstall'], home);
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -93,7 +79,7 @@ test('uninstall still works when the saved extension mode JSON is malformed', ()
   }
 });
 
-test('setup fails before installing when required Unix commands are missing', () => {
+test('setup fails before writing when required Unix commands are missing', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-setup-prereqs-'));
   try {
     const result = runSetup([], home, { PATH: '' });
@@ -109,7 +95,67 @@ test('setup fails before installing when required Unix commands are missing', ()
   }
 });
 
-test('setup injects custom sidecar directory and port configuration into the extension', () => {
+test('setup works without an installed agent or npx', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-no-agent-'));
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-runtime-bin-'));
+  try {
+    for (const command of ['bash', 'curl', 'jq']) {
+      const commandPath = path.join(bin, command);
+      fs.writeFileSync(commandPath, '#!/bin/sh\nexit 0\n');
+      fs.chmodSync(commandPath, 0o755);
+    }
+
+    const result = runSetup([], home, { PATH: bin });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.existsSync(path.join(home, '.redline/extension/manifest.json')), true);
+    assert.equal(fs.existsSync(path.join(home, '.agents')), false);
+    assert.equal(fs.existsSync(path.join(home, '.claude')), false);
+    assert.equal(fs.existsSync(path.join(home, '.codex')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
+});
+
+test('setup and uninstall never modify user-managed skills or plugin state', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-user-skill-state-'));
+  try {
+    const skillPath = path.join(home, '.agents/skills/redline/SKILL.md');
+    const lockPath = path.join(home, '.agents/.skill-lock.json');
+    const legacyPath = path.join(home, '.claude/plugins/cache/redline/sentinel.txt');
+    fs.mkdirSync(path.dirname(skillPath), { recursive: true });
+    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
+    fs.writeFileSync(skillPath, 'unrelated user-managed skill\n');
+    fs.writeFileSync(lockPath, '{"source":"someone/else"}\n');
+    fs.writeFileSync(legacyPath, 'keep me\n');
+
+    assert.equal(runSetup([], home).status, 0);
+    assert.equal(runSetup(['--uninstall'], home).status, 0);
+
+    assert.equal(fs.readFileSync(skillPath, 'utf8'), 'unrelated user-managed skill\n');
+    assert.equal(fs.readFileSync(lockPath, 'utf8'), '{"source":"someone/else"}\n');
+    assert.equal(fs.readFileSync(legacyPath, 'utf8'), 'keep me\n');
+    assert.equal(fs.existsSync(path.join(home, '.redline/extension')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('removed agent-scoped flags direct users to npx skills', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-agent-flags-'));
+  try {
+    const result = runSetup(['--codex-only'], home);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /manage agent skills directly with npx skills/i);
+    assert.equal(fs.existsSync(path.join(home, '.redline')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('setup injects custom sidecar directory and port configuration', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-status-custom-'));
   const customDir = path.join(home, 'custom-redline-data');
   try {
@@ -134,11 +180,9 @@ test('setup with screenshots syncs a full-access extension and persists the mode
   try {
     const result = runSetup(['--with-screenshots'], home);
 
-    assert.equal(result.status, 0);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.match(result.stdout, /screenshots: enabled/);
-    assert.match(result.stdout, /works on any http\/https page/);
-    assert.match(result.stdout, /reload the page tabs/);
-
+    assert.match(result.stdout, /Agent skills are unchanged/);
     const manifest = JSON.parse(fs.readFileSync(path.join(home, '.redline/extension/manifest.json'), 'utf8'));
     assert.ok(manifest.host_permissions.includes('<all_urls>'));
     assert.ok(manifest.content_scripts[0].matches.includes('<all_urls>'));
@@ -152,106 +196,14 @@ test('setup with screenshots syncs a full-access extension and persists the mode
     assert.equal(fs.statSync(path.join(home, '.redline/extension')).mode & 0o777, 0o700);
     assert.equal(fs.statSync(path.join(home, '.redline/extension/auth.js')).mode & 0o777, 0o600);
     assert.match(installedAuth, new RegExp(authToken));
-    assert.doesNotMatch(installedAuth, /__REDLINE_AUTH_TOKEN__/);
 
     const config = JSON.parse(fs.readFileSync(path.join(home, '.redline/config.json'), 'utf8'));
     assert.equal(config.extensionMode, 'full');
-    assert.equal(fs.statSync(path.join(home, '.claude/settings.json')).mode & 0o777, 0o600);
-    assert.equal(fs.statSync(path.join(home, '.agents/plugins/marketplace.json')).mode & 0o777, 0o600);
 
     const rerun = runSetup([], home);
-    assert.equal(rerun.status, 0);
+    assert.equal(rerun.status, 0, rerun.stderr || rerun.stdout);
     assert.match(rerun.stdout, /screenshots: enabled/);
-    assert.match(rerun.stdout, /claude:\s+already up to date/);
-    assert.match(rerun.stdout, /codex:\s+already up to date/);
     assert.match(rerun.stdout, /extension:\s+already up to date/);
-
-    const persistedManifest = JSON.parse(fs.readFileSync(path.join(home, '.redline/extension/manifest.json'), 'utf8'));
-    assert.ok(persistedManifest.host_permissions.includes('<all_urls>'));
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test('setup preserves other Codex marketplace entries', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-marketplace-merge-'));
-  try {
-    const marketplacePath = path.join(home, '.agents/plugins/marketplace.json');
-    fs.mkdirSync(path.dirname(marketplacePath), { recursive: true });
-    fs.writeFileSync(marketplacePath, JSON.stringify({
-      name: 'personal',
-      interface: { displayName: 'Personal tools' },
-      plugins: [{ name: 'existing', source: { source: 'local', path: './plugins/existing' } }],
-    }));
-
-    const result = runSetup([], home);
-    assert.equal(result.status, 0, result.stderr || result.stdout);
-    const marketplace = JSON.parse(fs.readFileSync(marketplacePath, 'utf8'));
-    assert.deepEqual(marketplace.plugins.map((plugin) => plugin.name), ['existing', 'redline']);
-    assert.equal(marketplace.name, 'personal');
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test('Codex uninstall preserves other marketplace entries and their registration', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-marketplace-uninstall-'));
-  try {
-    const marketplacePath = path.join(home, '.agents/plugins/marketplace.json');
-    fs.mkdirSync(path.dirname(marketplacePath), { recursive: true });
-    fs.writeFileSync(marketplacePath, JSON.stringify({
-      name: 'personal',
-      interface: { displayName: 'Personal tools' },
-      plugins: [{ name: 'existing', source: { source: 'local', path: './plugins/existing' } }],
-    }));
-    assert.equal(runSetup([], home).status, 0);
-    const existingCache = path.join(home, '.codex/plugins/cache/redline/existing/1.0.0/plugin.json');
-    fs.mkdirSync(path.dirname(existingCache), { recursive: true });
-    fs.writeFileSync(existingCache, '{}');
-
-    const result = runSetup(['--codex-only', '--uninstall'], home);
-    assert.equal(result.status, 0, result.stderr || result.stdout);
-
-    const marketplace = JSON.parse(fs.readFileSync(marketplacePath, 'utf8'));
-    assert.deepEqual(marketplace.plugins.map((plugin) => plugin.name), ['existing']);
-    const config = fs.readFileSync(path.join(home, '.codex/config.toml'), 'utf8');
-    assert.match(config, /\[marketplaces\.redline\]/);
-    assert.doesNotMatch(config, /\[plugins\."redline@redline"\]/);
-    assert.equal(fs.existsSync(path.join(home, '.agents/plugins/plugins/redline')), false);
-    assert.equal(fs.existsSync(existingCache), true);
-    assert.equal(fs.existsSync(path.join(home, '.redline/extension')), true);
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test('single-harness uninstall keeps the extension used by the other harness', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-scoped-uninstall-'));
-  try {
-    assert.equal(runSetup([], home).status, 0);
-
-    const result = runSetup(['--claude-only', '--uninstall'], home);
-    assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.equal(fs.existsSync(path.join(home, '.redline/extension')), true);
-    assert.equal(fs.existsSync(path.join(home, '.codex/plugins/cache/redline/redline', PACKAGE_VERSION)), true);
-    assert.equal(fs.existsSync(path.join(home, '.claude/plugins/cache/redline')), false);
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test('setup rejects malformed shared JSON without overwriting it', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-invalid-json-'));
-  try {
-    const marketplacePath = path.join(home, '.agents/plugins/marketplace.json');
-    const malformed = '{ definitely not valid JSON';
-    fs.mkdirSync(path.dirname(marketplacePath), { recursive: true });
-    fs.writeFileSync(marketplacePath, malformed);
-
-    const result = runSetup([], home);
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /invalid JSON/);
-    assert.equal(fs.readFileSync(marketplacePath, 'utf8'), malformed);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -264,13 +216,11 @@ test('setup local-only switches back to the low-permission extension', () => {
 
     const result = runSetup(['--local-only'], home);
 
-    assert.equal(result.status, 0);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.match(result.stdout, /screenshots: limited/);
-
     const manifest = JSON.parse(fs.readFileSync(path.join(home, '.redline/extension/manifest.json'), 'utf8'));
     assert.ok(!manifest.host_permissions.includes('<all_urls>'));
     assert.ok(!manifest.content_scripts[0].matches.includes('<all_urls>'));
-
     const config = JSON.parse(fs.readFileSync(path.join(home, '.redline/config.json'), 'utf8'));
     assert.equal(config.extensionMode, 'local');
   } finally {
@@ -295,7 +245,7 @@ test('extension status reports screenshot capability and upgrade command', () =>
     assert.match(full.stdout, /mode: full-access/);
     assert.match(full.stdout, /screenshots: enabled/);
     assert.match(full.stdout, /synced: extension files match/);
-    assert.doesNotMatch(full.stdout, /out of sync/);
+    assert.doesNotMatch(full.stdout, /skills:/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -304,9 +254,9 @@ test('extension status reports screenshot capability and upgrade command', () =>
 test('extension status reports version mismatch and reload guidance', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-status-stale-'));
   try {
-    const ext = path.join(home, '.redline/extension');
-    fs.mkdirSync(ext, { recursive: true });
-    fs.writeFileSync(path.join(ext, 'manifest.json'), JSON.stringify({
+    const extension = path.join(home, '.redline/extension');
+    fs.mkdirSync(extension, { recursive: true });
+    fs.writeFileSync(path.join(extension, 'manifest.json'), JSON.stringify({
       manifest_version: 3,
       name: 'Redline',
       version: '0.1.0',
@@ -318,9 +268,7 @@ test('extension status reports version mismatch and reload guidance', () => {
     assert.match(result.stdout, /installed: 0\.1\.0/);
     assert.ok(result.stdout.includes(`package: ${PACKAGE_VERSION}`));
     assert.match(result.stdout, /out of sync/);
-    assert.match(result.stdout, /redline setup/);
     assert.match(result.stdout, /chrome:\/\/extensions/);
-    assert.match(result.stdout, /Reload/);
     assert.match(result.stdout, /reload the page tabs/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

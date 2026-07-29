@@ -8,11 +8,11 @@ Highlight live web UI, leave redlines, pipe them into Claude Code or Codex.
 Built and maintained by [ArchAstro](https://github.com/ArchAstro).
 
 Three pieces: a Chrome extension for capturing redlines, a tiny local HTTP
-sidecar that stores them, and a Claude Code / Codex plugin that pulls them
-into your session so the agent can act on the feedback.
+sidecar that stores them, and an open agent skill that pulls them into your
+session so the agent can act on the feedback.
 
 ```
-[ Chrome extension ]  --POST-->  [ Sidecar @ 127.0.0.1:7878 ]  --GET-->  [ Claude / Codex ]
+[ Chrome extension ]  --POST-->  [ Sidecar @ 127.0.0.1:7878 ]  --GET-->  [ Coding agent ]
    select + comment                 ~/.redline/redlines.json                agent pull
 ```
 
@@ -35,7 +35,7 @@ Use the extension popup to review pending feedback for the current origin.
 ![Redline extension popup](docs/assets/redline-popup.png)
 
 Pull redlines into an agent workflow from the terminal or through the bundled
-Claude Code / Codex plugin.
+open agent skill.
 
 ![redline pull terminal output](docs/assets/redline-pull-terminal.png)
 
@@ -44,14 +44,27 @@ Claude Code / Codex plugin.
 ## Install
 
 Prerequisites: macOS or Linux, Node.js 18 or newer, Bash, curl, and jq, plus
-Chrome or another Chromium-based browser. Redline's command-line helpers do not
-currently support Windows.
+Chrome or another Chromium-based browser. Redline's command-line helpers do
+not currently support Windows. Your chosen agent-skill manager may have its
+own requirements.
+
+### Install the agent skill
+
+Install the portable skill with the standard skills CLI:
+
+```bash
+npx skills add ArchAstro/redline
+```
+
+The skills CLI controls the installation scope, target agents, updates,
+overwrite confirmation, provenance, and removal. Redline's CLI never installs,
+updates, removes, or inspects agent skills or legacy plugin state.
 
 ### Recommended CLI install
 
-Install once, then use the single `redline` command for setup, status, and
-daily use. For the most useful experience, enable full visual redlines so
-Redline works on normal websites and captures screenshots:
+Install the runtime once, then use the single `redline` command for extension
+setup, status, and daily use. For the most useful experience, enable full
+visual redlines so Redline works on normal websites and captures screenshots:
 
 ```bash
 npm install -g @archastro/redline
@@ -60,13 +73,11 @@ redline start
 redline status
 ```
 
-`redline setup --with-screenshots` writes plugin files under
-`~/.claude/plugins/cache/redline/` and `~/.codex/plugins/cache/redline/`,
-patches `~/.claude/settings.json` / `~/.codex/config.toml`, writes
-`~/.agents/plugins/marketplace.json` for Codex, and syncs the Chrome extension
-files to `~/.redline/extension`. Setup also creates an owner-only capability
-token used to authenticate extension requests to the sidecar. It is idempotent;
-re-run anytime to update.
+`redline setup --with-screenshots` syncs the Chrome extension to
+`~/.redline/extension` and creates an owner-only capability token used to
+authenticate extension requests to the sidecar. It is idempotent; re-run
+anytime to update. The command does not require an installed agent and does
+not read or modify Claude Code, Codex, `.agents`, or skills CLI state.
 The screenshot choice is saved in `~/.redline/config.json`, so future setup
 runs keep the same mode until you change it.
 
@@ -80,11 +91,9 @@ redline setup --local-only
 
 Flags:
 
-- `--claude-only` / `--codex-only` — scope to one harness
 - `--with-screenshots` — full visual mode for screenshots and any http/https page
 - `--local-only` — low-permission mode for localhost-style pages
-- `--uninstall` — remove both harnesses and the shared extension; combine with
-  `--claude-only` or `--codex-only` to remove one harness while keeping the extension
+- `--uninstall` — remove the local synced Chrome extension only
 - `--dry-run` — show what would change without writing
 
 The package is published publicly as `@archastro/redline`.
@@ -97,8 +106,9 @@ If you only want to run setup once without installing a global command:
 npx --yes -p @archastro/redline redline setup --with-screenshots
 ```
 
-After that, the agent plugin can run its bundled commands. For a regular shell
-workflow, the global CLI is smoother.
+The installed skill falls back to `npx --package @archastro/redline` when the
+command-line helpers are not globally installed. For regular shell use, the
+global CLI is smoother.
 
 ### Available commands
 
@@ -113,17 +123,7 @@ workflow, the global CLI is smoother.
 - `redline-tail` — dump everything in the store (debug)
 - `redline-clear` — wipe the local store
 
-### Manual plugin install (if you prefer the marketplace flow)
-
-**Claude Code:**
-```
-/plugin marketplace add ~/path/to/redline
-/plugin install redline@redline
-```
-
-**Codex:** point `~/.codex/config.toml` at a local marketplace dir, then
-enable the plugin. The `redline-agent-setup` script does this for you — use
-it unless you have a reason to do it by hand.
+Agent-skill status and lifecycle remain entirely under the skills CLI.
 
 ### Chrome extension
 
@@ -153,18 +153,14 @@ redline status
 
 ## Use
 
-Ask your agent: **"Pull my redlines."** Use the surface-specific invocation
-when you prefer to invoke Redline directly:
+Ask your agent: **"Pull my redlines."** The standard `redline` skill is
+installed for each supported agent:
 
 | Surface | Invocation |
 | ------- | ---------- |
 | Portable prompt | `"Pull my redlines."` |
-| Claude Code | `/redline:pull` |
-| Codex CLI/IDE | `$redline:pull` |
-| Codex desktop app | `@Redline` |
+| Agent skill | `redline` |
 | Terminal | `redline pull` |
-
-In the Codex desktop app, select `@Redline`, then ask `"Pull my redlines."`
 
 1. **Start the sidecar** (idempotent, detaches in the background, exits
    immediately once `/health` responds):
@@ -380,7 +376,6 @@ npm run release
 ```
 redline/
 ├── .changeset/{config.json, README.md}
-├── .claude-plugin/marketplace.json
 ├── .github/workflows/release.yml
 ├── package.json                      # @archastro/redline
 ├── extension/                        # Chrome MV3 extension
@@ -388,24 +383,13 @@ redline/
 │   ├── content.{js,css}              # selection UI, highlight rendering
 │   ├── background.js                 # screenshot cache + HTTP client
 │   └── popup.{html,js}               # toolbar list view
-├── .claude-plugins/redline/           # Claude Code plugin
-│   ├── .claude-plugin/plugin.json
-│   ├── bin/                          # on PATH inside Claude sessions
+├── runtime/
+│   ├── bin/
 │   │   ├── redline-sidecar
 │   │   ├── redline-pull
 │   │   ├── redline-watch
 │   │   ├── redline-tail
 │   │   └── redline-clear
-│   ├── server.js                     # Node stdlib HTTP sidecar
-│   └── skills/pull/SKILL.md          # /redline:pull
-└── plugins/redline/                   # Codex plugin
-    ├── .codex-plugin/plugin.json
-    ├── bin/
-    │   ├── redline-sidecar
-    │   ├── redline-pull
-    │   ├── redline-watch
-    │   ├── redline-tail
-    │   └── redline-clear
-    ├── server.js                     # Node stdlib HTTP sidecar
-    └── skills/pull/SKILL.md          # $redline:pull / @Redline
+│   └── server.js                     # Node stdlib HTTP sidecar
+└── skills/redline/SKILL.md           # portable open agent skill
 ```
