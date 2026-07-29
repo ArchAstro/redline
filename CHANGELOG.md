@@ -1,5 +1,14 @@
 # @archastro/redline
 
+## 0.2.6
+
+### Patch Changes
+
+- fa1f5ef: Preserve corrupt local stores instead of overwriting them, isolate untrusted
+  webpage text in agent output, invalidate deleted screenshot references, make
+  scoped uninstall safe, tighten GitHub workflow permissions, and harden public
+  release and contributor guidance.
+
 ## 0.2.5
 
 ### Patch Changes
