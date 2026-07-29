@@ -1,5 +1,9 @@
 # Redline
 
+[![npm version](https://img.shields.io/npm/v/%40archastro%2Fredline)](https://www.npmjs.com/package/@archastro/redline)
+[![CI](https://github.com/ArchAstro/redline/actions/workflows/ci.yml/badge.svg)](https://github.com/ArchAstro/redline/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/ArchAstro/redline)](LICENSE)
+
 Highlight live web UI, leave redlines, pipe them into Claude Code or Codex.
 Built and maintained by [ArchAstro](https://github.com/ArchAstro).
 
@@ -79,7 +83,8 @@ Flags:
 - `--claude-only` / `--codex-only` — scope to one harness
 - `--with-screenshots` — full visual mode for screenshots and any http/https page
 - `--local-only` — low-permission mode for localhost-style pages
-- `--uninstall` — remove from both
+- `--uninstall` — remove both harnesses and the shared extension; combine with
+  `--claude-only` or `--codex-only` to remove one harness while keeping the extension
 - `--dry-run` — show what would change without writing
 
 The package is published publicly as `@archastro/redline`.
@@ -312,7 +317,7 @@ lower-permission localhost workflow.
 ## Development
 
 ```bash
-git clone git@github.com:ArchAstro/redline.git
+git clone https://github.com/ArchAstro/redline.git
 cd redline
 npm install
 npm test
@@ -366,7 +371,7 @@ To publish manually without the PR dance (needs `NODE_AUTH_TOKEN`):
 
 ```bash
 npx changeset
-npx changeset version
+npm run version
 npm run release
 ```
 

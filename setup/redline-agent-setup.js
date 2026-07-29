@@ -100,7 +100,9 @@ Usage:
   redline-agent-setup                # install for any harness present
   redline-agent-setup --claude-only  # only install the Claude plugin
   redline-agent-setup --codex-only   # only install the Codex plugin
-  redline-agent-setup --uninstall    # remove the plugin from both harnesses
+  redline-agent-setup --uninstall    # remove both harnesses and the shared extension
+  redline-agent-setup --claude-only --uninstall
+                                   # remove one harness; keep the shared extension
   redline-agent-setup --dry-run      # print what would change without writing
   redline-agent-setup --with-screenshots
                                    # enable full page access for screenshots
@@ -488,11 +490,18 @@ async function installCodex(sourceRoot, dryRun) {
 async function uninstallCodex(dryRun) {
   const home = os.homedir();
   const codexRoot = path.join(home, '.codex');
-  const cacheRoot = path.join(codexRoot, 'plugins', 'cache', MARKETPLACE);
+  const cacheRoot = path.join(codexRoot, 'plugins', 'cache', MARKETPLACE, PLUGIN);
   const marketplaceRoot = path.join(home, '.agents', 'plugins');
   const marketplacePluginRoot = path.join(marketplaceRoot, 'plugins', PLUGIN);
+  const marketplacePath = path.join(marketplaceRoot, 'marketplace.json');
   const configPath = path.join(codexRoot, 'config.toml');
   let changed = false;
+
+  // Parse shared state before removing anything so malformed JSON cannot leave
+  // Codex in a partially uninstalled state.
+  const marketplace = await readJsonOrNull(marketplacePath);
+  const marketplacePlugins = Array.isArray(marketplace?.plugins) ? marketplace.plugins : [];
+  const remainingPlugins = marketplacePlugins.filter((plugin) => plugin?.name !== PLUGIN);
 
   if (await exists(cacheRoot)) {
     changed = true;
@@ -502,18 +511,28 @@ async function uninstallCodex(dryRun) {
     changed = true;
     if (!dryRun) await fsp.rm(marketplacePluginRoot, { recursive: true, force: true });
   }
+  if (marketplace && remainingPlugins.length !== marketplacePlugins.length) {
+    const nextMarketplace = { ...marketplace, plugins: remainingPlugins };
+    changed = (await writeFileIfChanged(
+      marketplacePath,
+      JSON.stringify(nextMarketplace, null, 2) + '\n',
+      dryRun,
+    )) || changed;
+  }
   if (await exists(configPath)) {
     let config = await fsp.readFile(configPath, 'utf8');
-    let before = config;
+    const before = config;
     config = removeTomlSection(config, `plugins."${PLUGIN_KEY}"`).content;
-    config = removeTomlSection(config, `marketplaces.${MARKETPLACE}`).content;
+    if (remainingPlugins.length === 0) {
+      config = removeTomlSection(config, `marketplaces.${MARKETPLACE}`).content;
+    }
     if (config !== before) {
       changed = true;
       if (!dryRun) await fsp.writeFile(configPath, config.endsWith('\n') ? config : config + '\n');
     }
   }
 
-  return { harness: 'codex', changed, paths: { cacheRoot, marketplacePluginRoot, configPath } };
+  return { harness: 'codex', changed, paths: { cacheRoot, marketplacePluginRoot, marketplacePath, configPath } };
 }
 
 // ---------- Main ----------
@@ -811,7 +830,12 @@ async function main() {
   }
 
   try {
-    const r = opts.uninstall ? await uninstallExtension(opts.dryRun) : await syncExtension(sourceRoot, opts.dryRun, extensionMode);
+    const scopedUninstall = opts.uninstall && (opts.claudeOnly || opts.codexOnly);
+    const r = opts.uninstall
+      ? (scopedUninstall
+          ? { harness: 'extension', changed: false, paths: {} }
+          : await uninstallExtension(opts.dryRun))
+      : await syncExtension(sourceRoot, opts.dryRun, extensionMode);
     if (r.changed) {
       log(`  ${color('green', 'extension:')} ${opts.uninstall ? 'removed' : 'synced'}`);
       for (const [k, v] of Object.entries(r.paths)) {

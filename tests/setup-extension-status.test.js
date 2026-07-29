@@ -194,6 +194,52 @@ test('setup preserves other Codex marketplace entries', () => {
   }
 });
 
+test('Codex uninstall preserves other marketplace entries and their registration', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-marketplace-uninstall-'));
+  try {
+    const marketplacePath = path.join(home, '.agents/plugins/marketplace.json');
+    fs.mkdirSync(path.dirname(marketplacePath), { recursive: true });
+    fs.writeFileSync(marketplacePath, JSON.stringify({
+      name: 'personal',
+      interface: { displayName: 'Personal tools' },
+      plugins: [{ name: 'existing', source: { source: 'local', path: './plugins/existing' } }],
+    }));
+    assert.equal(runSetup([], home).status, 0);
+    const existingCache = path.join(home, '.codex/plugins/cache/redline/existing/1.0.0/plugin.json');
+    fs.mkdirSync(path.dirname(existingCache), { recursive: true });
+    fs.writeFileSync(existingCache, '{}');
+
+    const result = runSetup(['--codex-only', '--uninstall'], home);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const marketplace = JSON.parse(fs.readFileSync(marketplacePath, 'utf8'));
+    assert.deepEqual(marketplace.plugins.map((plugin) => plugin.name), ['existing']);
+    const config = fs.readFileSync(path.join(home, '.codex/config.toml'), 'utf8');
+    assert.match(config, /\[marketplaces\.redline\]/);
+    assert.doesNotMatch(config, /\[plugins\."redline@redline"\]/);
+    assert.equal(fs.existsSync(path.join(home, '.agents/plugins/plugins/redline')), false);
+    assert.equal(fs.existsSync(existingCache), true);
+    assert.equal(fs.existsSync(path.join(home, '.redline/extension')), true);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('single-harness uninstall keeps the extension used by the other harness', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-scoped-uninstall-'));
+  try {
+    assert.equal(runSetup([], home).status, 0);
+
+    const result = runSetup(['--claude-only', '--uninstall'], home);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fs.existsSync(path.join(home, '.redline/extension')), true);
+    assert.equal(fs.existsSync(path.join(home, '.codex/plugins/cache/redline/redline', PACKAGE_VERSION)), true);
+    assert.equal(fs.existsSync(path.join(home, '.claude/plugins/cache/redline')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('setup rejects malformed shared JSON without overwriting it', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-invalid-json-'));
   try {
