@@ -189,12 +189,19 @@ test('watch authenticates with the real credential and emits a pending ID', asyn
 
 test('screenshot CLI retrieves authenticated bytes from the real sidecar into a new file', async (t) => {
   const context = await startSidecar(t);
-  const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
   const uploaded = await request(context.port, 'POST', '/screenshots', context.cliToken, {
     data_url: `data:image/png;base64,${png.toString('base64')}`,
   });
   assert.equal(uploaded.status, 201, uploaded.text);
   const screenshotId = JSON.parse(uploaded.text).id;
+  const redline = await request(context.port, 'POST', '/redlines', context.cliToken, {
+    screenshot_id: screenshotId,
+  });
+  assert.equal(redline.status, 201, redline.text);
   const unauthenticated = await request(context.port, 'GET', `/screenshots/${screenshotId}`);
   assert.equal(unauthenticated.status, 401);
 

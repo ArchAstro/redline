@@ -12,6 +12,8 @@ const { StateStore } = require('../runtime/lib/state-store');
 const TEST_INSTANCE_ID = 'rli_0123456789abcdef0123456789abcdef';
 const TEST_LAUNCH_ID = 'rll_fedcba9876543210fedcba9876543210';
 const TEST_EXTENSION_ID = 'hfjngaflcmkocibdgpeanmhjlkofibca';
+const VALID_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 const adminTokens = new Map();
 
 function launchArguments(dir) {
@@ -215,7 +217,7 @@ test('explicit dev mode rejects the production logical port', async () => {
 test('sidecar repairs private modes for its data store', async (t) => {
   const { dir } = await startSidecar(t, (dataDir) => {
     const shots = path.join(dataDir, 'screenshots');
-    fs.mkdirSync(shots, { mode: 0o755 });
+    fs.chmodSync(shots, 0o755);
     fs.writeFileSync(path.join(dataDir, 'redlines.json'), '[]', { mode: 0o666 });
     fs.writeFileSync(path.join(shots, 'ss_existing.png'), 'png', { mode: 0o666 });
     fs.chmodSync(path.join(dataDir, 'cli-credential'), 0o644);
@@ -224,7 +226,7 @@ test('sidecar repairs private modes for its data store', async (t) => {
 
   assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
   assert.equal(fs.statSync(path.join(dir, 'screenshots')).mode & 0o777, 0o700);
-  assert.equal(fs.statSync(path.join(dir, 'redlines.json')).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.join(dir, 'redlines.json.migrated')).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.join(dir, 'cli-credential')).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.join(dir, 'screenshots', 'ss_existing.png')).mode & 0o777, 0o600);
 });
@@ -267,12 +269,79 @@ test('sidecar allows only the configured Chrome extension with a paired token', 
   const response = await request(port, 'POST', '/redlines', {
     origin: `chrome-extension://${TEST_EXTENSION_ID}`,
     token: browserToken,
-    body: { url: 'https://app.example', origin: 'https://app.example', selected_text: 'Save', comment: 'Use Submit' },
+    body: {
+      operation_id: 'op_allowed_extension_01', clear_generation: 0,
+      url: 'https://app.example', origin: 'https://app.example', selected_text: 'Save', comment: 'Use Submit',
+    },
   });
 
   assert.equal(response.status, 201);
   assert.equal(response.headers['access-control-allow-origin'], `chrome-extension://${TEST_EXTENSION_ID}`);
   assert.equal(response.json.comment, 'Use Submit');
+});
+
+test('browser POST /redlines is one idempotent transaction with typed conflicts', async (t) => {
+  const { port, browserToken } = await startSidecar(t);
+  const origin = `chrome-extension://${TEST_EXTENSION_ID}`;
+  const body = {
+    operation_id: 'op_http_0123456789', clear_generation: 0,
+    url: 'https://app.example', selected_text: 'Save', comment: 'Use Submit',
+  };
+
+  const first = await request(port, 'POST', '/redlines', { origin, token: browserToken, body });
+  const retry = await request(port, 'POST', '/redlines', { origin, token: browserToken, body });
+  const conflict = await request(port, 'POST', '/redlines', {
+    origin, token: browserToken, body: { ...body, comment: 'Use Publish' },
+  });
+
+  assert.equal(first.status, 201);
+  assert.equal(retry.status, 200);
+  assert.deepEqual(retry.json, first.json);
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.json.error.code, 'operation_conflict');
+  assert.equal(conflict.text.includes('Use Publish'), false);
+  assert.equal((await request(port, 'GET', '/redlines')).json.length, 1);
+  assert.equal((await request(port, 'DELETE', `/redlines/${first.json.id}`)).status, 204);
+  const deletedRetry = await request(port, 'POST', '/redlines', { origin, token: browserToken, body });
+  assert.equal(deletedRetry.status, 410);
+  assert.equal(deletedRetry.json.error.code, 'operation_deleted');
+  assert.equal(deletedRetry.text.includes('Use Submit'), false);
+});
+
+test('browser clear revokes all profiles and rejects an old-generation draft after re-pairing', async (t) => {
+  const { port, dir, browserToken } = await startSidecar(t);
+  const origin = `chrome-extension://${TEST_EXTENSION_ID}`;
+  const oldDraft = {
+    operation_id: 'op_old_generation_01', clear_generation: 0,
+    selected_text: 'old copy', comment: 'must stay cleared',
+  };
+  assert.equal((await request(port, 'POST', '/redlines', { origin, token: browserToken, body: oldDraft })).status, 201);
+
+  const cleared = await request(port, 'POST', '/clear', { origin, token: browserToken });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.json.clear_generation, 1);
+  assert.equal((await request(port, 'GET', '/redlines', { origin, token: browserToken })).status, 401);
+
+  const store = new StateStore(dir);
+  const replacement = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const retained = await request(port, 'POST', '/redlines', { origin, token: replacement.token, body: oldDraft });
+  assert.equal(retained.status, 410);
+  assert.equal(retained.json.error.code, 'data_cleared');
+  assert.equal(retained.text.includes('old copy'), false);
+});
+
+test('concurrent browser clears authorize and mutate atomically', async (t) => {
+  const { port, browserToken } = await startSidecar(t);
+  const origin = `chrome-extension://${TEST_EXTENSION_ID}`;
+
+  const results = await Promise.all([
+    request(port, 'POST', '/clear', { origin, token: browserToken }),
+    request(port, 'POST', '/clear', { origin, token: browserToken }),
+  ]);
+
+  assert.deepEqual(results.map((result) => result.status).sort(), [200, 401]);
+  assert.equal(results.find((result) => result.status === 200).json.clear_generation, 1);
+  assert.equal(results.find((result) => result.status === 401).json.error.code, 'unauthorized');
 });
 
 test('explicit dev mode accepts the distinct contributor extension credential', async (t) => {
@@ -299,9 +368,104 @@ test('explicit dev mode accepts the distinct contributor extension credential', 
   const response = await request(port, 'POST', '/redlines', {
     origin: `chrome-extension://${TEST_EXTENSION_ID}`,
     legacyToken: devBrowserToken,
-    body: { selected_text: 'Contributor', comment: 'Works in explicit dev mode' },
+    body: {
+      operation_id: 'op_contributor_auth_01', clear_generation: 0,
+      selected_text: 'Contributor', comment: 'Works in explicit dev mode',
+    },
   });
   assert.equal(response.status, 201);
+});
+
+test('custom-port contributor submissions persist embedded PNGs and replay idempotently', async (t) => {
+  const devBrowserToken = 'dev_browser_transaction_abcdefghijklmnopqrstuvwxyz012345';
+  const { port, dir } = await startSidecar(t, (dataDir) => {
+    fs.writeFileSync(path.join(dataDir, 'auth-token'), `${devBrowserToken}\n`, { mode: 0o600 });
+  });
+  assert.notEqual(port, 7878);
+  const origin = `chrome-extension://${TEST_EXTENSION_ID}`;
+  const body = {
+    operation_id: 'op_contributor_http_01', clear_generation: 0,
+    url: 'http://127.0.0.1:3400/demo', selected_text: 'Save', comment: 'Use Publish',
+    screenshot_png: VALID_PNG_BASE64,
+  };
+
+  const first = await request(port, 'POST', '/redlines', { origin, legacyToken: devBrowserToken, body });
+  const retry = await request(port, 'POST', '/redlines', { origin, legacyToken: devBrowserToken, body });
+  const conflict = await request(port, 'POST', '/redlines', {
+    origin, legacyToken: devBrowserToken, body: { ...body, comment: 'Use Deploy' },
+  });
+
+  assert.equal(first.status, 201, first.text);
+  assert.match(first.json.screenshot_id, /^ss_[0-9a-f]{32}$/);
+  assert.equal(retry.status, 200, retry.text);
+  assert.deepEqual(retry.json, first.json);
+  assert.equal(conflict.status, 409, conflict.text);
+  assert.equal(conflict.json.error.code, 'operation_conflict');
+  assert.equal(conflict.text.includes('Use Deploy'), false);
+  const screenshot = await request(port, 'GET', `/screenshots/${first.json.screenshot_id}`, {
+    origin, legacyToken: devBrowserToken,
+  });
+  assert.equal(screenshot.status, 200);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'screenshots', `${first.json.screenshot_id}.png`)),
+    Buffer.from(VALID_PNG_BASE64, 'base64'));
+  const items = await request(port, 'GET', '/redlines', { origin, legacyToken: devBrowserToken });
+  assert.equal(items.status, 200);
+  assert.equal(items.json.length, 1);
+});
+
+test('custom-port generation advances after clear while retained drafts stay stale', async (t) => {
+  const devBrowserToken = 'dev_browser_generation_abcdefghijklmnopqrstuvwxyz012345';
+  const { port } = await startSidecar(t, (dataDir) => {
+    fs.writeFileSync(path.join(dataDir, 'auth-token'), `${devBrowserToken}\n`, { mode: 0o600 });
+  });
+  const origin = `chrome-extension://${TEST_EXTENSION_ID}`;
+  const oldDraft = {
+    operation_id: 'op_contributor_before_clear', clear_generation: 0,
+    selected_text: 'Before', comment: 'Retain this operation',
+  };
+  assert.equal((await request(port, 'POST', '/redlines', {
+    origin, legacyToken: devBrowserToken, body: oldDraft,
+  })).status, 201);
+
+  const cleared = await request(port, 'POST', '/admin/clear', { body: {} });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.json.clear_generation, 1);
+  const generation = await request(port, 'GET', '/generation', {
+    origin, legacyToken: devBrowserToken,
+  });
+  assert.equal(generation.status, 200, generation.text);
+  assert.deepEqual(generation.json, { clear_generation: 1 });
+  const fresh = await request(port, 'POST', '/redlines', {
+    origin,
+    legacyToken: devBrowserToken,
+    body: {
+      operation_id: 'op_contributor_after_clear', clear_generation: generation.json.clear_generation,
+      selected_text: 'After', comment: 'Use the current generation',
+    },
+  });
+  assert.equal(fresh.status, 201, fresh.text);
+  const retained = await request(port, 'POST', '/redlines', {
+    origin, legacyToken: devBrowserToken, body: oldDraft,
+  });
+  assert.equal(retained.status, 410, retained.text);
+  assert.equal(retained.json.error.code, 'data_cleared');
+});
+
+test('production generation requires and revalidates the paired browser token', async (t) => {
+  const { port, dir, browserToken } = await startSidecar(t);
+  const origin = `chrome-extension://${TEST_EXTENSION_ID}`;
+  const current = await request(port, 'GET', '/generation', { origin, token: browserToken });
+  assert.equal(current.status, 200, current.text);
+  assert.deepEqual(current.json, { clear_generation: 0 });
+  assert.equal((await request(port, 'GET', '/generation', { origin, noAuth: true })).status, 401);
+
+  assert.equal((await request(port, 'POST', '/clear', { origin, token: browserToken })).status, 200);
+  assert.equal((await request(port, 'GET', '/generation', { origin, token: browserToken })).status, 401);
+  const store = new StateStore(dir);
+  const replacement = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const replaced = await request(port, 'GET', '/generation', { origin, token: replacement.token });
+  assert.equal(replaced.status, 200, replaced.text);
+  assert.deepEqual(replaced.json, { clear_generation: 1 });
 });
 
 test('sidecar rejects extension requests without the setup capability token', async (t) => {
@@ -398,7 +562,9 @@ test('redline-pull contains untrusted page text inside a safe Markdown fence', a
 test('deleting the last redline for a screenshot deletes the screenshot', async (t) => {
   const { port, dir } = await startSidecar(t);
   const uploaded = await request(port, 'POST', '/screenshots', {
-    body: { data_url: `data:image/png;base64,${Buffer.from('png').toString('base64')}` },
+    body: {
+      data_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    },
   });
   assert.equal(uploaded.status, 201);
   const shot = path.join(dir, 'screenshots', `${uploaded.json.id}.png`);
@@ -430,6 +596,6 @@ test('retrying deletion cleans up screenshots orphaned by an earlier cleanup fai
   const orphan = path.join(dir, 'screenshots', 'ss_orphan.png');
   fs.writeFileSync(orphan, 'png');
 
-  assert.equal((await request(port, 'DELETE', '/redlines/already-deleted')).status, 204);
+  assert.equal((await request(port, 'DELETE', '/redlines/rl_already-deleted')).status, 204);
   assert.equal(fs.existsSync(orphan), false);
 });
