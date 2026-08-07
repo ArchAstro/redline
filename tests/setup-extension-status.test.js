@@ -97,6 +97,19 @@ test('--source rejects a flag as its path value', () => {
   }
 });
 
+test('--source= requires a non-empty path value', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-source-inline-empty-'));
+  try {
+    const result = runSetupRaw(['--source='], home);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--source requires a path value/i);
+    assert.equal(fs.existsSync(path.join(home, '.redline')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('--plugin-source requires a path value', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-plugin-source-missing-'));
   try {
@@ -114,6 +127,19 @@ test('--plugin-source rejects a flag as its path value', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-plugin-source-flag-'));
   try {
     const result = runSetupRaw(['--plugin-source', '--dry-run'], home);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--plugin-source requires a path value/i);
+    assert.equal(fs.existsSync(path.join(home, '.redline')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('--plugin-source= requires a non-empty path value', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-plugin-source-inline-empty-'));
+  try {
+    const result = runSetupRaw(['--plugin-source='], home);
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /--plugin-source requires a path value/i);
