@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Redline by ArchAstro",
+  "short_name": "Redline",
+  "version": "0.0.1",
+  "description": "Unpublished item that only reserves Redline's Chrome Web Store identity.",
+  "icons": {
+    "128": "icon-128.png"
+  }
+}

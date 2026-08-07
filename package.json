@@ -20,7 +20,8 @@
     "docs/assets/"
   ],
   "scripts": {
-    "check:syntax": "node -c runtime/server.js && node -c setup/redline-agent-setup.js && node -c setup/redline.js && node -c setup/sync-versions.js && node -c extension/auth.js && node -c extension/background.js && node -c extension/content.js && node -c extension/popup.js",
+    "build:chrome-bootstrap": "node scripts/build-bootstrap-extension.js",
+    "check:syntax": "node -c runtime/server.js && node -c setup/redline-agent-setup.js && node -c setup/redline.js && node -c setup/sync-versions.js && node -c extension/auth.js && node -c extension/background.js && node -c extension/content.js && node -c extension/popup.js && node -c scripts/build-bootstrap-extension.js",
     "check:versions": "node setup/sync-versions.js --check",
     "test": "node --test tests/*.test.js",
     "release": "npx changeset publish",
