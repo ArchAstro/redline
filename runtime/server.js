@@ -4,15 +4,62 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const { healthPayload, parseInstanceId, parseLaunchId, parsePort } = require('./lib/protocol');
+const { inspectLifecycleFile, parseLaunchMetadata, removeLifecycleFile } = require('./lib/sidecar-lifecycle');
 
-const PORT = parseInt(process.env.REDLINE_PORT || '7878', 10);
+let PORT;
+try {
+  PORT = parsePort(process.env.REDLINE_PORT ?? '7878');
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
 const ROOT = process.env.REDLINE_DIR || path.join(os.homedir(), '.redline');
+
+function exactArgument(name) {
+  const prefix = `--${name}=`;
+  const matches = process.argv.slice(2).filter((argument) => argument.startsWith(prefix));
+  if (matches.length !== 1) throw new Error(`expected exactly one ${prefix}<value> argument`);
+  return matches[0].slice(prefix.length);
+}
+
+let INSTANCE_ID;
+try {
+  INSTANCE_ID = parseInstanceId(process.env.REDLINE_INSTANCE_ID);
+} catch (error) {
+  console.error(`REDLINE_INSTANCE_ID is invalid: ${error.message}`);
+  process.exit(1);
+}
+let LAUNCH_ID;
+let LAUNCH_DIRECTORY;
+try {
+  if (process.argv.slice(2).length !== 3) throw new Error('expected exactly three Redline launch arguments');
+  LAUNCH_ID = parseLaunchId(exactArgument('redline-launch-id'));
+  if (LAUNCH_ID !== process.env.REDLINE_LAUNCH_ID) {
+    throw new Error('launch ID does not match server argv');
+  }
+  const device = exactArgument('redline-dir-device');
+  const inode = exactArgument('redline-dir-inode');
+  if (!/^(?:0|[1-9]\d*)$/.test(device) || !/^(?:0|[1-9]\d*)$/.test(inode)) {
+    throw new Error('launch directory identity must use canonical decimal integers');
+  }
+  LAUNCH_DIRECTORY = { device, inode };
+} catch (error) {
+  console.error(`Redline launch identity is invalid: ${error.message}`);
+  process.exit(1);
+}
 const DB = path.join(ROOT, 'redlines.json');
 const SHOTS = path.join(ROOT, 'screenshots');
 const AUTH_TOKEN_FILE = path.join(ROOT, 'auth-token');
 
 fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 });
 fs.chmodSync(ROOT, 0o700);
+const rootIdentity = fs.lstatSync(ROOT, { bigint: true });
+if (!rootIdentity.isDirectory() || rootIdentity.isSymbolicLink() ||
+    String(rootIdentity.dev) !== LAUNCH_DIRECTORY.device || String(rootIdentity.ino) !== LAUNCH_DIRECTORY.inode) {
+  console.error('Redline launch directory identity does not match REDLINE_DIR');
+  process.exit(1);
+}
 fs.mkdirSync(SHOTS, { recursive: true, mode: 0o700 });
 fs.chmodSync(SHOTS, 0o700);
 if (!fs.existsSync(DB)) fs.writeFileSync(DB, '[]', { mode: 0o600 });
@@ -149,7 +196,11 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (route === 'GET /health') {
-      return send(req, res, 200, { ok: true, port: PORT, db: DB, screenshots: SHOTS });
+      return send(req, res, 200, healthPayload({
+        instanceId: INSTANCE_ID,
+        launchId: LAUNCH_ID,
+        directory: LAUNCH_DIRECTORY,
+      }), { 'cache-control': 'no-store' });
     }
 
     if (route === 'POST /redlines') {
@@ -244,7 +295,82 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+let launchCommitted = typeof process.send !== 'function';
+
+function launcherPath(name) {
+  const candidate = process.env[name];
+  if (!candidate) return null;
+  const root = path.resolve(ROOT);
+  const resolved = path.resolve(candidate);
+  return path.dirname(resolved) === root ? resolved : null;
+}
+
+function removeOwnedFile(file, expected, label) {
+  if (!file) return;
+  try { removeLifecycleFile(file, label, expected); } catch {}
+}
+
+function removeOwnedLaunchFile(file, label) {
+  if (!file) return;
+  try {
+    const inspected = inspectLifecycleFile(file, label);
+    if (!inspected) return;
+    const metadata = parseLaunchMetadata(inspected.contents);
+    if (metadata.pid !== process.pid || metadata.launch_id !== LAUNCH_ID) return;
+    removeLifecycleFile(file, label, inspected.contents);
+  } catch {}
+}
+
+function cleanUncommittedLaunch() {
+  if (launchCommitted) return;
+  const pidFile = launcherPath('REDLINE_LAUNCH_PID_FILE');
+  const pidTmp = launcherPath('REDLINE_LAUNCH_PID_TMP');
+  const lockDir = launcherPath('REDLINE_LAUNCH_LOCK_DIR');
+  const expectedOwner = process.env.REDLINE_LAUNCH_LOCK_OWNER;
+  removeOwnedLaunchFile(pidFile, 'sidecar.pid');
+  removeOwnedLaunchFile(pidTmp, 'temporary sidecar.pid');
+  try {
+    if (lockDir) {
+      const lock = fs.lstatSync(lockDir);
+      if (!lock.isDirectory() || lock.isSymbolicLink()) return;
+      const ownerFile = path.join(lockDir, 'owner.pid');
+      removeOwnedFile(ownerFile, expectedOwner, 'startup lock owner');
+      const current = fs.lstatSync(lockDir);
+      if (current.isDirectory() && !current.isSymbolicLink() &&
+          current.dev === lock.dev && current.ino === lock.ino) fs.rmdirSync(lockDir);
+    }
+  } catch {}
+}
+
+function abortUncommittedLaunch() {
+  if (launchCommitted) return;
+  cleanUncommittedLaunch();
+  server.close(() => process.exit(1));
+  setTimeout(() => process.exit(1), 250).unref();
+}
+
+if (typeof process.send === 'function') {
+  process.once('disconnect', abortUncommittedLaunch);
+  process.on('message', (message) => {
+    if (launchCommitted || !message || message.type !== 'redline-commit' ||
+        message.pid !== process.pid || message.instanceId !== INSTANCE_ID || message.launchId !== LAUNCH_ID) return;
+    const pidFile = launcherPath('REDLINE_LAUNCH_PID_FILE');
+    try {
+      if (!pidFile) return;
+      const metadata = parseLaunchMetadata(inspectLifecycleFile(pidFile, 'sidecar.pid')?.contents);
+      if (metadata.pid !== process.pid || metadata.instance_id !== INSTANCE_ID || metadata.launch_id !== LAUNCH_ID) return;
+    } catch {
+      return;
+    }
+    launchCommitted = true;
+    process.send({ type: 'redline-committed', pid: process.pid, instanceId: INSTANCE_ID, launchId: LAUNCH_ID });
+  });
+}
+
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`redline sidecar listening on http://127.0.0.1:${PORT}`);
   console.log(`data dir: ${ROOT}`);
+  if (typeof process.send === 'function') {
+    process.send({ type: 'redline-ready', pid: process.pid, instanceId: INSTANCE_ID, launchId: LAUNCH_ID });
+  }
 });

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -e
-# Resolve symlinks (e.g. the PATH shim at /opt/homebrew/bin/redline-sidecar)
-# so $HERE points at the real package install, not the symlink's parent.
+
 SCRIPT="$0"
 while [ -L "$SCRIPT" ]; do
   link="$(readlink "$SCRIPT")"
@@ -11,126 +10,39 @@ while [ -L "$SCRIPT" ]; do
   esac
 done
 HERE="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
-PORT="${REDLINE_PORT:-7878}"
-DIR="${REDLINE_DIR:-$HOME/.redline}"
-PIDFILE="$DIR/sidecar.pid"
-LOGFILE="$DIR/sidecar.log"
+LIFECYCLE="$HERE/lib/sidecar-lifecycle.js"
+COMMAND="${1:-start}"
 
-mkdir -p "$DIR"
-chmod 700 "$DIR"
-
-is_running() {
-  curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1
-}
-
-cmd_status() {
-  if is_running; then
-    pid="$(cat "$PIDFILE" 2>/dev/null || echo '?')"
-    echo "up (pid $pid, port $PORT)"
-    return 0
-  fi
-  echo "down"
-  return 1
-}
-
-cmd_start() {
-  if is_running; then
-    pid="$(cat "$PIDFILE" 2>/dev/null || echo '?')"
-    echo "already running (pid $pid, port $PORT)"
-    return 0
-  fi
-  # Spawn through Node with detached:true so the sidecar gets its own process
-  # group. Plain nohup/disown can still be killed by agent command runners that
-  # clean up the caller's process group after the command exits.
-  node - "$HERE/server.js" "$PIDFILE" "$LOGFILE" <<'NODE'
-const fs = require('fs');
-const { spawn } = require('child_process');
-
-const [server, pidfile, logfile] = process.argv.slice(2);
-const out = fs.openSync(logfile, 'a', 0o600);
-fs.chmodSync(logfile, 0o600);
-const child = spawn(process.execPath, [server], {
-  detached: true,
-  stdio: ['ignore', out, out],
-  env: process.env,
-});
-fs.writeFileSync(pidfile, `${child.pid}\n`, { mode: 0o600 });
-fs.chmodSync(pidfile, 0o600);
-child.unref();
-NODE
-  attempt=0
-  while [ "$attempt" -lt 25 ]; do
-    attempt=$((attempt + 1))
-    sleep 0.1
-    if is_running; then
-      echo "started (pid $(cat "$PIDFILE"), port $PORT, log $LOGFILE)"
-      return 0
-    fi
-  done
-  echo "started but health check timed out — tail $LOGFILE" >&2
-  return 1
-}
-
-cmd_stop() {
-  pid=""
-  [ -f "$PIDFILE" ] && pid="$(cat "$PIDFILE")"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-    case "$command" in
-      *"$HERE/server.js"*)
-        kill "$pid" && rm -f "$PIDFILE"
-        echo "stopped (pid $pid)"
-        return 0
-        ;;
-    esac
-    rm -f "$PIDFILE"
-    echo "ignored stale pid file (pid $pid is not Redline)"
-    return 1
-  fi
-  rm -f "$PIDFILE"
-  echo "not running"
-}
-
-cmd_restart() {
-  cmd_stop || true
-  sleep 0.2
-  cmd_start
-}
-
-cmd_logs() {
-  if [ ! -f "$LOGFILE" ]; then
-    echo "no logs yet at $LOGFILE"
-    return 0
-  fi
-  if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--follow" ]; then
-    tail -f "$LOGFILE"
-  else
-    tail -n "${LINES:-50}" "$LOGFILE"
-  fi
-}
-
-case "${1:-start}" in
-  start)              cmd_start ;;
-  stop)               cmd_stop ;;
-  restart)            cmd_restart ;;
-  status)             cmd_status ;;
-  logs)               shift; cmd_logs "$@" ;;
-  foreground|fg|run)  exec node "$HERE/server.js" ;;
-  -h|--help|help)
-    cat <<EOF
-usage: redline-sidecar [SUBCOMMAND]
-
-  start       (default) start as a detached background process and return when /health is up
-  stop        stop the background process
-  restart     stop + start
-  status      check /health, exit non-zero if down
-  logs [-f]   tail recent server logs (-f to follow)
-  foreground  run the server in the current shell (blocks)
-
-env: REDLINE_PORT (default 7878), REDLINE_DIR (default ~/.redline)
-pid:  \$REDLINE_DIR/sidecar.pid
-log:  \$REDLINE_DIR/sidecar.log
-EOF
-    ;;
-  *) echo "unknown subcommand: $1 (try --help)" >&2; exit 1 ;;
+case "$COMMAND" in
+  start|stop|restart|status|logs|foreground|fg|run|-h|--help|help) ;;
+  *) echo "unknown subcommand: $COMMAND (try --help)" >&2; exit 1 ;;
 esac
+
+SUPERVISOR_PID=""
+
+terminate_supervisor() {
+  local exit_code="$1" attempt=0
+  trap - HUP INT TERM
+  if [ -n "$SUPERVISOR_PID" ] && kill -0 "$SUPERVISOR_PID" 2>/dev/null; then
+    kill -TERM "$SUPERVISOR_PID" 2>/dev/null || true
+    while kill -0 "$SUPERVISOR_PID" 2>/dev/null && [ "$attempt" -lt 20 ]; do
+      attempt=$((attempt + 1))
+      sleep 0.05
+    done
+    if kill -0 "$SUPERVISOR_PID" 2>/dev/null; then kill -KILL "$SUPERVISOR_PID" 2>/dev/null || true; fi
+    wait "$SUPERVISOR_PID" 2>/dev/null || true
+  fi
+  exit "$exit_code"
+}
+
+trap 'terminate_supervisor 129' HUP
+trap 'terminate_supervisor 130' INT
+trap 'terminate_supervisor 143' TERM
+
+node "$LIFECYCLE" "$@" &
+SUPERVISOR_PID=$!
+if wait "$SUPERVISOR_PID"; then
+  exit 0
+else
+  exit $?
+fi

@@ -6,6 +6,19 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { healthPayload } = require('../runtime/lib/protocol');
+
+const TEST_INSTANCE_ID = 'rli_0123456789abcdef0123456789abcdef';
+const TEST_LAUNCH_ID = 'rll_fedcba9876543210fedcba9876543210';
+
+function launchArguments(dir) {
+  const identity = fs.lstatSync(dir, { bigint: true });
+  return [
+    `--redline-launch-id=${TEST_LAUNCH_ID}`,
+    `--redline-dir-device=${identity.dev}`,
+    `--redline-dir-inode=${identity.ino}`,
+  ];
+}
 
 async function freePort() {
   return await new Promise((resolve, reject) => {
@@ -53,9 +66,15 @@ async function startSidecar(t, prepare) {
   const authToken = 'test-capability-token-with-at-least-32-bytes';
   fs.writeFileSync(path.join(dir, 'auth-token'), authToken, { mode: 0o600 });
   if (prepare) prepare(dir);
-  const child = spawn(process.execPath, ['runtime/server.js'], {
+  const child = spawn(process.execPath, ['runtime/server.js', ...launchArguments(dir)], {
     cwd: path.resolve(__dirname, '..'),
-    env: { ...process.env, REDLINE_PORT: String(port), REDLINE_DIR: dir },
+    env: {
+      ...process.env,
+      REDLINE_PORT: String(port),
+      REDLINE_DIR: dir,
+      REDLINE_INSTANCE_ID: TEST_INSTANCE_ID,
+      REDLINE_LAUNCH_ID: TEST_LAUNCH_ID,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -74,7 +93,7 @@ async function startSidecar(t, prepare) {
     }
     try {
       const health = await request(port, 'GET', '/health');
-      if (health.status === 200) return { port, dir, authToken };
+      if (health.status === 200) return { port, dir, authToken, childPid: child.pid };
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
@@ -90,9 +109,15 @@ test('sidecar refuses to start with a corrupt store and preserves it', () => {
   try {
     fs.writeFileSync(db, corrupt, { mode: 0o600 });
     fs.writeFileSync(path.join(dir, 'auth-token'), 'test-capability-token-with-at-least-32-bytes', { mode: 0o600 });
-    const result = spawnSync(process.execPath, ['runtime/server.js'], {
+    const result = spawnSync(process.execPath, ['runtime/server.js', ...launchArguments(dir)], {
       cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, REDLINE_PORT: String(port), REDLINE_DIR: dir },
+      env: {
+        ...process.env,
+        REDLINE_PORT: String(port),
+        REDLINE_DIR: dir,
+        REDLINE_INSTANCE_ID: TEST_INSTANCE_ID,
+        REDLINE_LAUNCH_ID: TEST_LAUNCH_ID,
+      },
       encoding: 'utf8',
     });
 
@@ -101,6 +126,28 @@ test('sidecar refuses to start with a corrupt store and preserves it', () => {
     assert.equal(fs.readFileSync(db, 'utf8'), corrupt);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('server rejects noncanonical and out-of-range REDLINE_PORT values before listening', () => {
+  for (const value of ['54336junk', '0', '65536', ' 7878', '7878 ', '']) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-invalid-server-port-'));
+    try {
+      const result = spawnSync(process.execPath, ['runtime/server.js'], {
+        cwd: path.resolve(__dirname, '..'),
+        env: { ...process.env, REDLINE_PORT: value, REDLINE_DIR: dir },
+        encoding: 'utf8',
+        timeout: 750,
+      });
+
+      assert.equal(result.error, undefined, `server hung for REDLINE_PORT=${JSON.stringify(value)}`);
+      assert.notEqual(result.status, 0);
+      assert.equal(result.stderr.includes(
+        `invalid Redline port ${JSON.stringify(value)}; expected a canonical decimal integer from 1 to 65535`,
+      ), true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 });
 
@@ -119,6 +166,27 @@ test('sidecar repairs private modes for its data store', async (t) => {
   assert.equal(fs.statSync(path.join(dir, 'redlines.json')).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.join(dir, 'auth-token')).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.join(dir, 'screenshots', 'ss_existing.png')).mode & 0o777, 0o600);
+});
+
+test('health exposes only the versioned public identity and disables caching', async (t) => {
+  const { port, dir, authToken, childPid } = await startSidecar(t);
+
+  const response = await request(port, 'GET', '/health');
+
+  assert.equal(response.status, 200);
+  const directory = fs.lstatSync(dir, { bigint: true });
+  assert.deepEqual(response.json, {
+    ...healthPayload({
+      instanceId: TEST_INSTANCE_ID,
+      launchId: TEST_LAUNCH_ID,
+      directory: { device: String(directory.dev), inode: String(directory.ino) },
+    }),
+    process: { pid: childPid },
+  });
+  assert.equal(response.headers['cache-control'], 'no-store');
+  assert.equal(response.text.includes(dir), false);
+  assert.equal(response.text.includes(authToken), false);
+  assert.doesNotMatch(response.text, /(?:db|screenshots|token|secret|credential|path)/i);
 });
 
 test('sidecar rejects browser requests from arbitrary website origins', async (t) => {
