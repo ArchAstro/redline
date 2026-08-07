@@ -121,21 +121,29 @@ test('setup works without an installed agent or npx', () => {
 test('setup and uninstall never modify user-managed skills or plugin state', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-user-skill-state-'));
   try {
-    const skillPath = path.join(home, '.agents/skills/redline/SKILL.md');
-    const lockPath = path.join(home, '.agents/.skill-lock.json');
-    const legacyPath = path.join(home, '.claude/plugins/cache/redline/sentinel.txt');
-    fs.mkdirSync(path.dirname(skillPath), { recursive: true });
-    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
-    fs.writeFileSync(skillPath, 'unrelated user-managed skill\n');
-    fs.writeFileSync(lockPath, '{"source":"someone/else"}\n');
-    fs.writeFileSync(legacyPath, 'keep me\n');
+    const preservedFiles = new Map([
+      ['.agents/skills/redline/SKILL.md', Buffer.from('unrelated user-managed skill\n')],
+      ['.agents/.skill-lock.json', Buffer.from('{"source":"someone/else"}\n')],
+      ['.claude/plugins/cache/redline/sentinel.bin', Buffer.from([0x00, 0xff, 0x52, 0x4c])],
+      ['.codex/plugins/cache/redline/sentinel.txt', Buffer.from('keep Codex plugin state\n')],
+    ]);
+    for (const [relativePath, content] of preservedFiles) {
+      const destination = path.join(home, relativePath);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.writeFileSync(destination, content);
+    }
+
+    const assertPreserved = () => {
+      for (const [relativePath, content] of preservedFiles) {
+        assert.deepEqual(fs.readFileSync(path.join(home, relativePath)), content);
+      }
+    };
 
     assert.equal(runSetup([], home).status, 0);
+    assertPreserved();
     assert.equal(runSetup(['--uninstall'], home).status, 0);
 
-    assert.equal(fs.readFileSync(skillPath, 'utf8'), 'unrelated user-managed skill\n');
-    assert.equal(fs.readFileSync(lockPath, 'utf8'), '{"source":"someone/else"}\n');
-    assert.equal(fs.readFileSync(legacyPath, 'utf8'), 'keep me\n');
+    assertPreserved();
     assert.equal(fs.existsSync(path.join(home, '.redline/extension')), false);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });

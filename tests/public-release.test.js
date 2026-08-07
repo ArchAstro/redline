@@ -91,11 +91,13 @@ test('Redline CLI leaves agent skill and plugin state under user control', () =>
   const setup = read('setup/redline-agent-setup.js');
   const readme = read('README.md');
   const changeset = read('.changeset/standard-agent-skills.md');
+  const skill = read('skills/redline/SKILL.md');
 
   assert.doesNotMatch(setup, /spawn(?:Sync)?\([^)]*npx|skills@|skill-lock|skill-source|skills-status|cleanupLegacyPlugins/);
   assert.match(readme, /npx skills add ArchAstro\/redline/);
   assert.match(readme, /never installs,\s*updates,\s*removes,\s*or inspects agent skills/i);
   assert.match(changeset, /"@archastro\/redline": minor/);
+  assert.match(skill, /^metadata:\n  author: ArchAstro\n  source: https:\/\/github\.com\/ArchAstro\/redline$/m);
 });
 
 test('README documents the portable skill and terminal invocation', () => {
