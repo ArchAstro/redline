@@ -27,7 +27,7 @@
     "version": "npx changeset version && node setup/sync-versions.js"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.29.8"
+    "@changesets/cli": "^2.31.1"
   },
   "overrides": {
     "js-yaml": "^4.3.1",
