@@ -80,9 +80,13 @@ function parseArgs(argv) {
       case '-h': case '--help': opts.help = true; break;
       default:
         if (a.startsWith('--source=')) {
-          opts.source = a.slice('--source='.length);
+          const value = a.slice('--source='.length);
+          if (!value) fail('--source requires a path value');
+          opts.source = value;
         } else if (a.startsWith('--plugin-source=')) {
-          opts.source = a.slice('--plugin-source='.length);
+          const value = a.slice('--plugin-source='.length);
+          if (!value) fail('--plugin-source requires a path value');
+          opts.source = value;
         } else {
           fail(`unknown arg: ${a} (try --help)`);
         }
