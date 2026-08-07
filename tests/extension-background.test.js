@@ -28,21 +28,42 @@ const backgroundSource = fs.readFileSync(
 );
 
 function pairedStorage(overrides = {}) {
-  return {
-    local: localStorageArea({
+  const local = localStorageArea({
       redline_connection: {
         client_id: "rlc_0123456789abcdef0123456789abcdef",
-        token: "test-capability-token",
+        token: "t".repeat(43),
         clear_generation: 0,
         port: 7878,
         ...overrides,
       },
-    }),
+    });
+  const session = localStorageArea();
+  local.setAccessLevel = async () => {};
+  session.setAccessLevel = async () => {};
+  return { local, session };
+}
+
+function alarmApi() {
+  const alarms = new Map();
+  return {
+    async create(name, details) { alarms.set(name, { name, scheduledTime: details.when }); },
+    async get(name) { return alarms.get(name); },
+    async clear(name) { return alarms.delete(name); },
+    onAlarm: { addListener() {} },
   };
 }
 
 function localStorageArea(initial = {}, { quotaBytes = Infinity, failSet = false, failRemove = false } = {}) {
   const data = structuredClone(initial);
+  if (data.redline_connection && !data.redline_connection.setup) {
+    data.redline_connection.setup = {
+      consent: "accepted",
+      consented_at: "2026-08-07T19:00:00.000Z",
+    };
+  }
+  if (data.redline_connection && data.redline_connection.consent_version === undefined) {
+    data.redline_connection.consent_version = 1;
+  }
   const failures = { set: failSet, remove: failRemove };
   return {
     data,
@@ -107,6 +128,7 @@ function indexedDbArea({ failOpen = false, failPut = false, failDelete = false }
                       return;
                     }
                     if (kind === "get") result.result = records.has(key) ? structuredClone(records.get(key)) : undefined;
+                    if (kind === "getAllKeys") result.result = [...records.keys()];
                     if (kind === "put") records.set(key, structuredClone(value));
                     if (kind === "delete") records.delete(key);
                     result.onsuccess?.();
@@ -116,6 +138,7 @@ function indexedDbArea({ failOpen = false, failPut = false, failDelete = false }
                 };
                 return {
                   get(key) { return operation("get", key); },
+                  getAllKeys() { return operation("getAllKeys"); },
                   put(value, key) { return operation("put", key, value); },
                   delete(key) { return operation("delete", key); },
                 };
@@ -157,6 +180,11 @@ function productionBackground({
     connection ? { redline_connection: connection } : {}
   );
   const effectiveIndexedDb = indexedDb || indexedDbArea();
+  let alarmHandler;
+  const alarms = new Map();
+  const sessionStorage = localStorageArea();
+  effectiveStorage.setAccessLevel = async () => {};
+  sessionStorage.setAccessLevel = async () => {};
   const context = {
     AbortController,
     URLSearchParams,
@@ -166,14 +194,20 @@ function productionBackground({
     TextEncoder,
     setTimeout,
     clearTimeout,
-    importScripts() {
-      context.REDLINE_CONFIG = config;
-    },
+    REDLINE_CONFIG: config,
+    importScripts() {},
     indexedDB: effectiveIndexedDb,
     fetch,
     chrome: {
       storage: {
         local: effectiveStorage,
+        session: sessionStorage,
+      },
+      alarms: {
+        async create(name, details) { alarms.set(name, { name, scheduledTime: details.when }); },
+        async get(name) { return alarms.get(name); },
+        async clear(name) { return alarms.delete(name); },
+        onAlarm: { addListener(handler) { alarmHandler = handler; } },
       },
       tabs: {
         async get() { return { id: 7, windowId: 3, url: "https://example.test/page" }; },
@@ -193,11 +227,86 @@ function productionBackground({
   return {
     captures: () => captures,
     indexedDb: effectiveIndexedDb,
+    alarms,
+    async fireAlarm(name) { await alarmHandler({ name }); },
     send(message) {
       return new Promise((resolve) => messageHandler(message, { tab: { id: 7 } }, resolve));
     },
   };
 }
+
+test("the service worker removes failed drafts when their seven-day retention expires", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    port: 7878,
+  };
+  const storage = localStorageArea({ redline_connection: connection });
+  const indexedDb = indexedDbArea();
+  const background = productionBackground({
+    connection,
+    storageArea: storage,
+    indexedDb,
+    captureVisibleTab: async () => { throw new Error("no screenshot"); },
+    fetch: async (url) => {
+      if (url.endsWith("/generation")) return generationResponse();
+      throw new TypeError("keep draft pending");
+    },
+  });
+  await background.send({
+    type: "submit-redline",
+    submission_key: "draft_retention_expiry_012345",
+    payload: { selected_text: "delete after retention" },
+  });
+  const [key, record] = [...indexedDb.records.entries()][0];
+  record.created_at = "2020-01-01T00:00:00.000Z";
+  record.expires_at = "2020-01-08T00:00:00.000Z";
+  indexedDb.records.set(key, record);
+  storage.data[key].created_at = record.created_at;
+  storage.data[key].expires_at = record.expires_at;
+
+  await background.fireAlarm("redline-pending-cleanup");
+
+  assert.equal(indexedDb.records.size, 0);
+  assert.deepEqual(Object.keys(storage.data), ["redline_connection"]);
+});
+
+test("editing local storage cannot forge consent or persist selected content", async () => {
+  const storage = localStorageArea({
+    redline_connection: {
+      client_id: "rlc_0123456789abcdef0123456789abcdef",
+      token: "t".repeat(43),
+      clear_generation: 0,
+      consent_version: 1,
+      port: 7878,
+      setup: { consent: "accepted", consented_at: "2026-08-07T19:00:00.000Z" },
+    },
+  });
+  const indexedDb = indexedDbArea();
+  const background = productionBackground({
+    connection: storage.data.redline_connection,
+    storageArea: storage,
+    indexedDb,
+    captureVisibleTab: async () => { throw new Error("must not capture"); },
+    fetch: async () => ({
+      ok: false,
+      status: 401,
+      async json() { return { error: { code: "unauthorized" } }; },
+    }),
+  });
+
+  const result = await background.send({
+    type: "submit-redline",
+    submission_key: "draft_forged_consent_012345",
+    payload: { selected_text: "must not persist", comment: "private feedback" },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error_code, "connection_required");
+  assert.equal(indexedDb.records.size, 0);
+  assert.equal(JSON.stringify(storage.data).includes("must not persist"), false);
+});
 
 test("large pending PNGs bypass storage.local quota and remain durable in IndexedDB", async () => {
   const png = new PNG({ width: 1450, height: 1450 });
@@ -208,7 +317,7 @@ test("large pending PNGs bypass storage.local quota and remain durable in Indexe
   const storage = localStorageArea({
     redline_connection: {
       client_id: "rlc_0123456789abcdef0123456789abcdef",
-      token: "paired-browser-token",
+      token: "t".repeat(43),
       clear_generation: 0,
       port: 7878,
     },
@@ -248,7 +357,7 @@ test("IndexedDB write failure prevents submission and preserves bounded local st
   const storage = localStorageArea({
     redline_connection: {
       client_id: "rlc_0123456789abcdef0123456789abcdef",
-      token: "paired-browser-token",
+      token: "t".repeat(43),
       clear_generation: 0,
       port: 7878,
     },
@@ -281,7 +390,7 @@ test("IndexedDB write failure prevents submission and preserves bounded local st
 test("cleanup failure retains the immutable IndexedDB draft for deterministic retry", async () => {
   const connection = {
     client_id: "rlc_0123456789abcdef0123456789abcdef",
-    token: "paired-browser-token",
+    token: "t".repeat(43),
     clear_generation: 0,
     port: 7878,
   };
@@ -330,7 +439,7 @@ test("cleanup failure retains the immutable IndexedDB draft for deterministic re
 test("locator write failure leaves the IndexedDB operation recoverable without submitting", async () => {
   const connection = {
     client_id: "rlc_0123456789abcdef0123456789abcdef",
-    token: "paired-browser-token",
+    token: "t".repeat(43),
     clear_generation: 0,
     port: 7878,
   };
@@ -380,7 +489,7 @@ test("locator write failure leaves the IndexedDB operation recoverable without s
 test("a corrupted IndexedDB screenshot fails closed before retry network activity", async () => {
   const connection = {
     client_id: "rlc_0123456789abcdef0123456789abcdef",
-    token: "paired-browser-token",
+    token: "t".repeat(43),
     clear_generation: 0,
     port: 7878,
   };
@@ -424,7 +533,7 @@ test("a corrupted IndexedDB screenshot fails closed before retry network activit
 test("a legacy storage.local pending draft migrates to IndexedDB before retry", async () => {
   const connection = {
     client_id: "rlc_0123456789abcdef0123456789abcdef",
-    token: "paired-browser-token",
+    token: "t".repeat(43),
     clear_generation: 0,
     port: 7878,
   };
@@ -463,9 +572,9 @@ test("a legacy storage.local pending draft migrates to IndexedDB before retry", 
   };
   assert.equal((await firstWorker.send(message)).ok, false);
   assert.equal(firstWorker.captures(), 0);
-  assert.equal(storage.data[key].version, 2);
+  assert.equal(storage.data[key].version, 3);
   assert.equal(Object.hasOwn(storage.data[key], "payload"), false);
-  assert.equal(indexedDb.records.get(key).version, 2);
+  assert.equal(indexedDb.records.get(key).version, 3);
   assert.equal(indexedDb.records.get(key).payload_hash, storage.data[key].payload_hash);
 
   const secondWorker = productionBackground({
@@ -485,7 +594,7 @@ test("a legacy storage.local pending draft migrates to IndexedDB before retry", 
 test("a pending locator without its IndexedDB record fails closed", async () => {
   const connection = {
     client_id: "rlc_0123456789abcdef0123456789abcdef",
-    token: "paired-browser-token",
+    token: "t".repeat(43),
     clear_generation: 0,
     port: 7878,
   };
@@ -641,6 +750,7 @@ test("a sidecar 401 explains how to refresh the stale extension context", async 
     },
     fetch: async () => ({ ok: false, status: 401 }),
     chrome: {
+      alarms: alarmApi(),
       storage: pairedStorage(),
       tabs: {
         onUpdated: { addListener() {} },
@@ -699,6 +809,7 @@ test("a stalled screenshot capture cannot block redline submission", async () =>
       throw new Error(`unexpected request: ${url}`);
     },
     chrome: {
+      alarms: alarmApi(),
       storage: pairedStorage(),
       tabs: {
         async get() {
@@ -772,6 +883,7 @@ test("deleting a redline invalidates cached screenshot IDs", async () => {
       throw new Error(`unexpected request: ${url}`);
     },
     chrome: {
+      alarms: alarmApi(),
       storage: pairedStorage(),
       tabs: {
         async get() {
@@ -840,6 +952,7 @@ test("delete waits for an in-flight screenshot and redline creation", async (t) 
       throw new Error(`unexpected request: ${url}`);
     },
     chrome: {
+      alarms: alarmApi(),
       storage: pairedStorage(),
       tabs: {
         async get() {
@@ -914,6 +1027,7 @@ test("refresh waits for an in-flight submission before invalidating its screensh
       throw new Error(`unexpected request: ${url}`);
     },
     chrome: {
+      alarms: alarmApi(),
       storage: pairedStorage(),
       tabs: {
         async get() {
@@ -991,6 +1105,7 @@ test("a timed-out sidecar request releases the screenshot operation queue", asyn
       throw new Error(`unexpected request: ${url}`);
     },
     chrome: {
+      alarms: alarmApi(),
       storage: pairedStorage(),
       tabs: {
         async get() {
@@ -1066,6 +1181,7 @@ test("a stalled response body times out and releases the screenshot operation qu
       throw new Error(`unexpected request: ${url}`);
     },
     chrome: {
+      alarms: alarmApi(),
       storage: pairedStorage(),
       tabs: {
         async get() {
@@ -1103,7 +1219,7 @@ test("production submission sends one bearer-authenticated transaction with the 
   const requests = [];
   const connection = {
     client_id: "rlc_0123456789abcdef0123456789abcdef",
-    token: "paired-browser-token",
+    token: "t".repeat(43),
     clear_generation: 7,
     port: 7878,
   };
@@ -1129,8 +1245,8 @@ test("production submission sends one bearer-authenticated transaction with the 
   assert.equal(requests.length, 2);
   assert.equal(requests[0].url, "http://127.0.0.1:7878/generation");
   assert.equal(requests[1].url, "http://127.0.0.1:7878/redlines");
-  assert.equal(requests[0].options.headers.authorization, "Bearer paired-browser-token");
-  assert.equal(requests[1].options.headers.authorization, "Bearer paired-browser-token");
+  assert.equal(requests[0].options.headers.authorization, `Bearer ${"t".repeat(43)}`);
+  assert.equal(requests[1].options.headers.authorization, `Bearer ${"t".repeat(43)}`);
   assert.equal(Object.hasOwn(requests[1].options.headers, "x-redline-token"), false);
   const body = JSON.parse(requests[1].options.body);
   assert.equal(body.operation_id, "op_from_message_1234");
@@ -1146,7 +1262,7 @@ test("an uncertain submission retry reuses its generated operation ID", async ()
   const background = productionBackground({
     connection: {
       client_id: "rlc_0123456789abcdef0123456789abcdef",
-      token: "paired-browser-token",
+      token: "t".repeat(43),
       clear_generation: 2,
       port: 7878,
     },
@@ -1174,7 +1290,7 @@ test("an unreadable success response retries with the same operation instead of 
   const background = productionBackground({
     connection: {
       client_id: "rlc_0123456789abcdef0123456789abcdef",
-      token: "paired-browser-token",
+      token: "t".repeat(43),
       clear_generation: 2,
       port: 7878,
     },
@@ -1198,7 +1314,7 @@ test("an unreadable success response retries with the same operation instead of 
 test("a worker restart reuses the durable byte-identical submission without recapturing", async () => {
   const connection = {
     client_id: "rlc_0123456789abcdef0123456789abcdef",
-    token: "paired-browser-token",
+    token: "t".repeat(43),
     clear_generation: 4,
     port: 7878,
   };
@@ -1268,7 +1384,7 @@ test("missing connection and typed conflict/deletion responses are repair-safe a
   const invalid = productionBackground({
     connection: {
       client_id: "rlc_0123456789abcdef0123456789abcdef",
-      token: "paired-browser-token",
+      token: "t".repeat(43),
       clear_generation: 2,
       port: 7878,
     },
@@ -1287,7 +1403,7 @@ test("missing connection and typed conflict/deletion responses are repair-safe a
     const background = productionBackground({
       connection: {
         client_id: "rlc_0123456789abcdef0123456789abcdef",
-        token: "paired-browser-token",
+        token: "t".repeat(43),
         clear_generation: 2,
         port: 7878,
       },
@@ -1318,7 +1434,7 @@ test("a sparse draft is rejected before capture, persistence, or network seriali
   const storage = localStorageArea({
     redline_connection: {
       client_id: "rlc_0123456789abcdef0123456789abcdef",
-      token: "paired-browser-token",
+      token: "t".repeat(43),
       clear_generation: 0,
       port: 7878,
     },

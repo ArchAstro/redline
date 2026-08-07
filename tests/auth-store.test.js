@@ -113,6 +113,18 @@ test('each pair mints a distinct stable client and hashed capability token', asy
   assert.equal(persisted.includes(clientTwo.token), false);
 });
 
+test('pre-consent browser credentials remain readable for migration but are never authorized', async (t) => {
+  const { root, store } = tempStore(t);
+  const paired = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const statePath = path.join(root, 'state.json');
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  delete state.clients[paired.clientId].consent_version;
+  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+
+  assert.equal(await store.verifyClientToken(paired.token), null);
+  await assert.rejects(store.currentGeneration({ browserToken: paired.token }), /not connected/i);
+});
+
 test('supports per-client and all-browser revocation with monotonic clear generation', async (t) => {
   const { store } = tempStore(t);
   const first = await store.consumePairingSecret((await store.createPairingWindow()).secret);

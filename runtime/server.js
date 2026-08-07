@@ -217,6 +217,7 @@ function protectedRouteSupports(pathname, method) {
   if (pathname === '/redlines') return ['GET', 'POST'].includes(method);
   if (pathname === '/generation') return method === 'GET';
   if (pathname === '/clear') return method === 'POST';
+  if (pathname === '/clients/current') return method === 'DELETE';
   if (/^\/redlines\/[^/]+\/ack$/.test(pathname)) return method === 'POST';
   if (/^\/redlines\/[^/]+$/.test(pathname)) return ['PATCH', 'DELETE'].includes(method);
   if (pathname === '/screenshots') return method === 'POST';
@@ -336,12 +337,19 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.secret !== 'string') {
         return errorResponse(req, res, 400, 'invalid_request', 'pairing request is invalid');
       }
-      const client = await stateStore.consumePairingSecret(body.secret);
+      if (body.consent_version !== 1) {
+        return errorResponse(req, res, 400, 'consent_required', 'pairing requires the current data consent grant');
+      }
+      if (Object.keys(body).sort().join(',') !== 'consent_version,secret') {
+        return errorResponse(req, res, 400, 'invalid_request', 'pairing request is invalid');
+      }
+      const client = await stateStore.consumePairingSecret(body.secret, { consentVersion: body.consent_version });
       if (!client) return errorResponse(req, res, 401, 'invalid_pairing_secret', 'pairing secret is invalid or expired');
       return send(req, res, 201, {
         client_id: client.clientId,
         token: client.token,
         clear_generation: client.clearGeneration,
+        consent_version: 1,
       }, { 'cache-control': 'no-store' });
     }
 
@@ -357,6 +365,15 @@ const server = http.createServer(async (req, res) => {
       const clearGeneration = await stateStore.currentGeneration(
         auth.kind === 'browser' ? { browserToken: auth.token } : undefined);
       return send(req, res, 200, { clear_generation: clearGeneration }, { 'cache-control': 'no-store' });
+    }
+
+    if (route === 'DELETE /clients/current') {
+      if (auth.kind !== 'browser') {
+        return errorResponse(req, res, 403, 'forbidden_origin', 'browser revocation requires a paired Redline profile');
+      }
+      const revoked = await stateStore.revokeCurrentBrowser(auth.token);
+      if (!revoked) return errorResponse(req, res, 401, 'unauthorized', 'browser client is not connected');
+      return send(req, res, 204, '', { 'cache-control': 'no-store' });
     }
 
     if (route === 'POST /admin/pairing') {

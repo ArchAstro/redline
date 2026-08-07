@@ -2,14 +2,20 @@
   "manifest_version": 3,
   "name": "Redline",
   "version": "0.2.6",
-  "description": "Highlight web UI, leave redlines, and pipe them to Claude Code or Codex.",
+  "description": "Turn precise webpage feedback into actionable coding-agent input.",
+  "minimum_chrome_version": "111",
   "permissions": [
+    "storage",
     "activeTab",
-    "storage"
+    "scripting",
+    "alarms"
   ],
   "host_permissions": [
-    "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://127.0.0.1:7878/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -17,20 +23,13 @@
   "content_scripts": [
     {
       "matches": [
-        "http://localhost/*",
-        "https://localhost/*",
-        "http://127.0.0.1/*",
-        "https://127.0.0.1/*",
-        "http://*.localhost/*",
-        "https://*.localhost/*"
+        "http://127.0.0.1:7878/connect"
       ],
       "js": [
-        "content.js"
+        "connect.js"
       ],
-      "css": [
-        "content.css"
-      ],
-      "run_at": "document_idle"
+      "run_at": "document_start",
+      "all_frames": false
     }
   ],
   "action": {

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect Redline</title>
+  <link rel="stylesheet" href="onboarding.css">
+</head>
+<body>
+  <header class="product-bar">
+    <span class="mark" aria-hidden="true">R</span>
+    <div>
+      <strong>Redline</strong>
+      <span>Local connection setup</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="setup-block" aria-labelledby="setup-title">
+      <div class="section-heading">
+        <p class="step">Connection</p>
+        <h1 id="setup-title">Connect the local helper</h1>
+      </div>
+      <p id="status" class="status" role="status" aria-live="polite">
+        Checking for Redline on this computer...
+      </p>
+      <div id="setup-command" class="command-row">
+        <code>npx --yes @archastro/redline setup</code>
+        <button type="button" id="copy-command" class="secondary" title="Copy setup command">
+          Copy
+        </button>
+      </div>
+    </section>
+
+    <section id="data-disclosure" class="disclosure" aria-labelledby="disclosure-title" hidden>
+      <div class="section-heading">
+        <p class="step">Data handling</p>
+        <h2 id="disclosure-title">Review before connecting</h2>
+      </div>
+      <p class="lead">Redline handles webpage data only when you use it on a site you enable.</p>
+      <dl class="facts">
+        <div>
+          <dt>What it handles</dt>
+          <dd>Selected text and comments; the page URL, title, and nearby DOM context; and optional screenshots only when you separately enable full visual mode.</dd>
+        </div>
+        <div>
+          <dt>Where it stays</dt>
+          <dd>Submitted feedback stays in the local Redline sidecar. Redline schedules in-progress Chrome drafts and temporary screenshots for deletion after seven days and removes expired drafts the next time Chrome runs.</dd>
+        </div>
+        <div>
+          <dt>Who receives it</dt>
+          <dd>No data or telemetry is sent to ArchAstro. When you invoke your coding agent, selected data may be transferred to your configured coding-model provider under that provider's terms.</dd>
+        </div>
+        <div>
+          <dt>Your controls</dt>
+          <dd>You can delete individual feedback or use Clear all local Redline data. Disconnecting stops this browser without deleting submitted feedback.</dd>
+        </div>
+      </dl>
+      <label class="consent-row" for="consent">
+        <input type="checkbox" id="consent">
+        <span>I understand this data handling and want to connect this browser.</span>
+      </label>
+      <div class="actions">
+        <button type="button" id="connect" disabled>Connect browser</button>
+        <button type="button" id="decline" class="secondary">Decline</button>
+      </div>
+    </section>
+
+    <section id="site-step" class="site-step" aria-labelledby="site-title" hidden>
+      <div class="section-heading">
+        <p class="step">Ready</p>
+        <h2 id="site-title">Redline is connected</h2>
+      </div>
+      <p>Open the page you want to review, then enable Redline for that site from the extension.</p>
+      <button type="button" id="enable-site">Enable Redline on this site</button>
+    </section>
+
+    <section id="declined-step" class="declined-step" aria-labelledby="declined-title" hidden>
+      <h2 id="declined-title" tabindex="-1">Redline was not connected</h2>
+      <p>The one-time secret was removed. Redline cannot access site content. You can clear local extension data or uninstall Redline from Chrome.</p>
+    </section>
+  </main>
+
+  <script src="connection.js"></script>
+  <script src="onboarding.js"></script>
+</body>
+</html>
