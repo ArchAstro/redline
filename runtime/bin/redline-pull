@@ -7,9 +7,12 @@
 #   redline-pull --project my-app
 #   redline-pull --no-ack              # peek without consuming
 set -e
+set -o pipefail
 
 PORT="${REDLINE_PORT:-7878}"
 BASE="http://127.0.0.1:$PORT"
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+HTTP_CLIENT="$HERE/lib/cli-http.js"
 ACK=1
 ORIGIN=""
 PROJECT=""
@@ -34,7 +37,7 @@ if ! command -v jq >/dev/null; then
   exit 1
 fi
 
-if ! curl -sf "$BASE/health" >/dev/null; then
+if ! node "$HTTP_CLIENT" "$PORT" GET "/health" >/dev/null; then
   echo "redline sidecar not reachable at $BASE" >&2
   echo "start it with: redline-sidecar start" >&2
   exit 1
@@ -56,7 +59,7 @@ q="status=pending"
 [ -n "$ORIGIN" ]  && q="$q&origin=$(urlenc "$ORIGIN")"
 [ -n "$PROJECT" ] && q="$q&project=$(urlenc "$PROJECT")"
 
-items=$(curl -s "$BASE/redlines?$q")
+items=$(node "$HTTP_CLIENT" "$PORT" GET "/redlines?$q")
 count=$(echo "$items" | jq 'length')
 
 if [ "$count" = "0" ]; then
@@ -101,6 +104,6 @@ echo "$items" | jq -c '.[]' | while IFS= read -r item; do
   fi
 
   if [ "$ACK" = "1" ]; then
-    curl -s -X POST "$BASE/redlines/$id/ack" >/dev/null
+    node "$HTTP_CLIENT" "$PORT" POST "/redlines/$id/ack" >/dev/null
   fi
 done

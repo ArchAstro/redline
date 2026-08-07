@@ -62,6 +62,7 @@ function healthPayload({
   instanceId = process.env.REDLINE_INSTANCE_ID,
   launchId = process.env.REDLINE_LAUNCH_ID,
   directory,
+  pairing = { available: false },
 } = {}) {
   const validatedInstanceId = parseInstanceId(instanceId);
   const validatedLaunchId = parseLaunchId(launchId);
@@ -71,7 +72,9 @@ function healthPayload({
     package_version: packageVersion,
     protocol: { ...PROTOCOL.version },
     capabilities: [...PROTOCOL.requiredCapabilities],
-    pairing: { available: false },
+    pairing: pairing.available
+      ? { available: true, expires_at: new Date(pairing.expiresAt).toISOString() }
+      : { available: false },
     process: { pid: process.pid },
     instance: { id: validatedInstanceId },
     launch: { id: validatedLaunchId },
@@ -123,6 +126,16 @@ function checkHealthCompatibility(payload) {
       typeof payload.pairing.available !== 'boolean') {
     return { compatible: false, reason: 'health response pairing.available must be a boolean' };
   }
+  let pairingExpiresAt;
+  if (payload.pairing.available) {
+    pairingExpiresAt = payload.pairing.expires_at;
+    if (typeof pairingExpiresAt !== 'string' || !Number.isFinite(Date.parse(pairingExpiresAt)) ||
+        new Date(pairingExpiresAt).toISOString() !== pairingExpiresAt) {
+      return { compatible: false, reason: 'available pairing must include a valid ISO expiry' };
+    }
+  } else if (Object.hasOwn(payload.pairing, 'expires_at')) {
+    return { compatible: false, reason: 'unavailable pairing must not include an expiry' };
+  }
   if (!payload.process || typeof payload.process !== 'object' ||
       !Number.isSafeInteger(payload.process.pid) || payload.process.pid <= 0) {
     return { compatible: false, reason: 'health response process.pid must be a positive safe integer' };
@@ -149,6 +162,7 @@ function checkHealthCompatibility(payload) {
   return {
     compatible: true,
     pairingAvailable: payload.pairing.available,
+    ...(pairingExpiresAt ? { pairingExpiresAt } : {}),
     processId: payload.process.pid,
     instanceId: payload.instance.id,
     launchId: payload.launch.id,
