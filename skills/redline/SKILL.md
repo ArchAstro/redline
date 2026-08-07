@@ -1,6 +1,9 @@
 ---
 name: redline
 description: Pull and act on UI redlines captured by the Redline Chrome extension. Use when the user asks to pull redlines, show pending redlines, fetch comments left on a page, review browser highlights, apply UI feedback, fix the things they flagged on the site, or "what did I redline on the page".
+metadata:
+  author: ArchAstro
+  source: https://github.com/ArchAstro/redline
 ---
 
 # Pull Redlines
