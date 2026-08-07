@@ -70,7 +70,13 @@ function parseArgs(argv) {
       case '--with-screenshots': opts.withScreenshots = true; break;
       case '--local-only': opts.localOnly = true; break;
       case '--source':
-      case '--plugin-source': opts.source = args[++i]; break;
+      case '--plugin-source': {
+        const value = args[i + 1];
+        if (!value || value.startsWith('-')) fail(`${a} requires a path value`);
+        opts.source = value;
+        i++;
+        break;
+      }
       case '-h': case '--help': opts.help = true; break;
       default:
         if (a.startsWith('--source=')) {

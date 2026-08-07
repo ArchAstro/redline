@@ -30,6 +30,14 @@ function runSetup(args, home, envOverrides = {}) {
   });
 }
 
+function runSetupRaw(args, home) {
+  return spawnSync(process.execPath, [SETUP, ...args], {
+    cwd: ROOT,
+    env: { ...process.env, HOME: home, REDLINE_PORT: '65534' },
+    encoding: 'utf8',
+  });
+}
+
 test('extension status reports a missing synced extension', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-status-missing-'));
   try {
@@ -60,6 +68,58 @@ test('setup fails when the package omits the Chrome extension', () => {
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(source, { recursive: true, force: true });
+  }
+});
+
+test('--source requires a path value', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-source-missing-'));
+  try {
+    const result = runSetupRaw(['--source'], home);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--source requires a path value/i);
+    assert.equal(fs.existsSync(path.join(home, '.redline')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('--source rejects a flag as its path value', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-source-flag-'));
+  try {
+    const result = runSetupRaw(['--source', '--dry-run'], home);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--source requires a path value/i);
+    assert.equal(fs.existsSync(path.join(home, '.redline')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('--plugin-source requires a path value', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-plugin-source-missing-'));
+  try {
+    const result = runSetupRaw(['--plugin-source'], home);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--plugin-source requires a path value/i);
+    assert.equal(fs.existsSync(path.join(home, '.redline')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('--plugin-source rejects a flag as its path value', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-plugin-source-flag-'));
+  try {
+    const result = runSetupRaw(['--plugin-source', '--dry-run'], home);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--plugin-source requires a path value/i);
+    assert.equal(fs.existsSync(path.join(home, '.redline')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
