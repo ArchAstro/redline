@@ -164,7 +164,7 @@ async function pair(context, secret, overrides = {}) {
   return call(context.port, 'POST', '/pair', {
     origin: ORIGIN,
     redlineHeader: '1',
-    body: { secret },
+    body: { secret, consent_version: 1 },
     ...overrides,
   });
 }
@@ -222,7 +222,8 @@ test('Store mode pairs only across the fixed production Host and official Origin
     host: '127.0.0.1:7878', token: context.cliToken,
   });
   const exact = await call(context.port, 'POST', '/pair', {
-    host: '127.0.0.1:7878', origin: context.origin, redlineHeader: '1', body: { secret: created.json.secret },
+    host: '127.0.0.1:7878', origin: context.origin, redlineHeader: '1',
+    body: { secret: created.json.secret, consent_version: 1 },
   });
   assert.equal(exact.status, 201);
   assert.equal((await call(context.port, 'GET', '/health')).status, 400);
@@ -247,6 +248,54 @@ test('pairs once and returns a distinct browser capability accepted by protected
   const list = await call(context.port, 'GET', '/redlines', { origin: ORIGIN, token: response.json.token });
   assert.equal(list.status, 200);
   assert.equal((await pair(context, window.secret)).status, 401);
+});
+
+test('pairing requires an explicit supported consent grant without consuming the secret', async (t) => {
+  const context = await start(t);
+  const window = await context.store.createPairingWindow();
+
+  for (const body of [
+    { secret: window.secret },
+    { secret: window.secret, consent_version: 0 },
+    { secret: window.secret, consent_version: '1' },
+    { secret: window.secret, consent_version: 2 },
+  ]) {
+    const rejected = await pair(context, window.secret, { body });
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.json.error.code, 'consent_required');
+  }
+
+  assert.equal((await pair(context, window.secret)).status, 201);
+});
+
+test('pairing rejects undeclared request fields without consuming the secret', async (t) => {
+  const context = await start(t);
+  const window = await context.store.createPairingWindow();
+  const rejected = await pair(context, window.secret, {
+    body: { secret: window.secret, consent_version: 1, analytics: true },
+  });
+  assert.equal(rejected.status, 400);
+  assert.equal(rejected.json.error.code, 'invalid_request');
+  assert.equal((await pair(context, window.secret)).status, 201);
+});
+
+test('a browser can revoke only its own authenticated capability', async (t) => {
+  const context = await start(t);
+  const first = await pair(context, (await context.store.createPairingWindow()).secret);
+  const second = await pair(context, (await context.store.createPairingWindow()).secret);
+
+  assert.equal((await call(context.port, 'DELETE', '/clients/current', {
+    origin: ORIGIN, token: first.json.token,
+  })).status, 204);
+  assert.equal((await call(context.port, 'GET', '/generation', {
+    origin: ORIGIN, token: first.json.token,
+  })).status, 401);
+  assert.equal((await call(context.port, 'GET', '/generation', {
+    origin: ORIGIN, token: second.json.token,
+  })).status, 200);
+  assert.equal((await call(context.port, 'DELETE', '/clients/current', {
+    origin: ORIGIN, token: first.json.token,
+  })).status, 401);
 });
 
 test('rejects the full pairing boundary matrix without reflecting origins or secrets', async (t) => {

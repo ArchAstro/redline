@@ -118,7 +118,8 @@ function validateState(value) {
   for (const [id, client] of Object.entries(value.clients)) {
     if (!/^rlc_[0-9a-f]{32}$/.test(id) || !client || typeof client !== 'object' ||
         typeof client.token_hash !== 'string' || !SECRET_HASH_PATTERN.test(client.token_hash) ||
-        typeof client.created_at !== 'string' || !Number.isFinite(Date.parse(client.created_at))) {
+        typeof client.created_at !== 'string' || !Number.isFinite(Date.parse(client.created_at)) ||
+        (client.consent_version !== undefined && client.consent_version !== 1)) {
       throw new Error('Redline state has invalid browser client state; refusing to overwrite it');
     }
   }
@@ -940,15 +941,20 @@ class StateStore {
     });
   }
 
-  consumePairingSecret(secret) {
+  consumePairingSecret(secret, { consentVersion = 1 } = {}) {
     return this._serialized(() => {
+      if (consentVersion !== 1) return null;
       const state = this._read();
       if (!state.pairing || Date.parse(state.pairing.expires_at) <= this.now() ||
           !verifySecret(secret, state.pairing.hash)) return null;
       state.pairing = null;
       const clientId = `rlc_${crypto.randomBytes(16).toString('hex')}`;
       const token = this.secretFactory(32);
-      state.clients[clientId] = { token_hash: hashSecret(token), created_at: new Date(this.now()).toISOString() };
+      state.clients[clientId] = {
+        token_hash: hashSecret(token),
+        created_at: new Date(this.now()).toISOString(),
+        consent_version: consentVersion,
+      };
       this._write(state);
       return { clientId, token, clearGeneration: state.clear_generation };
     });
@@ -963,7 +969,7 @@ class StateStore {
 
   _browserClientIdLocked(state, token) {
     for (const [clientId, client] of Object.entries(state.clients)) {
-      if (verifySecret(token, client.token_hash)) return clientId;
+      if (client.consent_version === 1 && verifySecret(token, client.token_hash)) return clientId;
     }
     return null;
   }
@@ -978,6 +984,17 @@ class StateStore {
     return this._serialized(() => {
       const state = this._read();
       if (!Object.hasOwn(state.clients, clientId)) return false;
+      delete state.clients[clientId];
+      this._write(state);
+      return true;
+    });
+  }
+
+  revokeCurrentBrowser(token) {
+    return this._serialized(() => {
+      const state = this._read();
+      const clientId = this._browserClientIdLocked(state, token);
+      if (!clientId) return false;
       delete state.clients[clientId];
       this._write(state);
       return true;

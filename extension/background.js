@@ -1,6 +1,5 @@
-importScripts('auth.js');
-
-const PORT = globalThis.REDLINE_CONFIG.port;
+const DEV_CONFIG = globalThis.REDLINE_CONFIG;
+const PORT = DEV_CONFIG?.port ?? 7878;
 const BASE = `http://127.0.0.1:${PORT}`;
 const DEV_MODE = PORT !== 7878;
 const CONNECTION_KEY = 'redline_connection';
@@ -11,6 +10,56 @@ const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const PENDING_DB_NAME = 'redline_pending';
 const PENDING_DB_VERSION = 1;
 const PENDING_STORE_NAME = 'submissions';
+const PAIRING_SECRET_KEY = 'redline_pairing_secret';
+const PAIRING_SECRET_TTL_MS = 10 * 60 * 1000;
+const PAIRING_SECRET_ALARM = 'redline-pairing-secret-expiry';
+const PENDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const PENDING_CLEANUP_ALARM = 'redline-pending-cleanup';
+let storageAccessError = null;
+let pairingSecretOperation = Promise.resolve();
+let pendingMaintenanceOperation = Promise.resolve();
+const storageAreasSupportTrustedAccess =
+  typeof chrome.storage.local?.setAccessLevel === 'function' &&
+  typeof chrome.storage.session?.setAccessLevel === 'function' &&
+  typeof chrome.alarms?.create === 'function' && typeof chrome.alarms?.get === 'function' &&
+  typeof chrome.alarms?.clear === 'function' && typeof chrome.alarms?.onAlarm?.addListener === 'function';
+const storageAccessReady = (storageAreasSupportTrustedAccess ? Promise.all([
+  chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' }),
+  chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' }),
+]) : Promise.reject(new Error('trusted-context storage APIs are unavailable'))).catch((error) => {
+  storageAccessError = error;
+});
+
+function exactConnectUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' && url.hostname === '127.0.0.1' && url.port === '7878' &&
+      url.pathname === '/connect' && !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+function exactPairingTabUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.port !== '7878' ||
+        url.pathname !== '/connect' || url.username || url.password || url.search) return false;
+    return /^#pair=[A-Za-z0-9_-]{43}$/.test(url.hash);
+  } catch {
+    return false;
+  }
+}
+
+function validConnectSender(msg, sender) {
+  return msg && typeof msg === 'object' && !Array.isArray(msg) &&
+    Object.keys(msg).sort().join(',') === 'secret,source,type' &&
+    msg.type === 'redline-stage-pairing-secret' && msg.source === 'redline-connect-v1' &&
+    /^[A-Za-z0-9_-]{43}$/.test(msg.secret || '') &&
+    sender?.id === chrome.runtime.id && sender.frameId === 0 &&
+    Number.isSafeInteger(sender.tab?.id) &&
+    exactConnectUrl(sender.url) && exactConnectUrl(sender.tab.url);
+}
 
 class RedlineExtensionError extends Error {
   constructor(code, message) {
@@ -19,9 +68,60 @@ class RedlineExtensionError extends Error {
   }
 }
 
+async function requireTrustedStorageAccess() {
+  await storageAccessReady;
+  if (storageAccessError) {
+    throw new RedlineExtensionError('storage_access_failed',
+      'Redline could not protect its local browser credentials. Reload the extension and retry.');
+  }
+}
+
+async function maintainPairingSecret() {
+  await requireTrustedStorageAccess();
+  const stored = await chrome.storage.session.get(PAIRING_SECRET_KEY);
+  const staged = stored?.[PAIRING_SECRET_KEY];
+  const expiry = typeof staged?.expires_at === 'string' ? Date.parse(staged.expires_at) : NaN;
+  const valid = staged && typeof staged === 'object' && !Array.isArray(staged) &&
+    Object.keys(staged).sort().join(',') === 'expires_at,secret' &&
+    /^[A-Za-z0-9_-]{43}$/.test(staged.secret || '') && Number.isFinite(expiry) &&
+    new Date(expiry).toISOString() === staged.expires_at;
+  if (!valid || expiry <= Date.now()) {
+    if (staged !== undefined) await chrome.storage.session.remove(PAIRING_SECRET_KEY);
+    await chrome.alarms.clear(PAIRING_SECRET_ALARM);
+    return null;
+  }
+  await chrome.alarms.create(PAIRING_SECRET_ALARM, { when: expiry });
+  return staged;
+}
+
+function queuePairingSecretOperation(operation) {
+  const run = pairingSecretOperation.then(operation, operation);
+  pairingSecretOperation = run.catch(() => {});
+  return run;
+}
+
+function queuePendingMaintenance() {
+  const run = pendingMaintenanceOperation.then(maintainPendingDrafts, maintainPendingDrafts);
+  pendingMaintenanceOperation = run.catch(() => {});
+  return run;
+}
+
+chrome.alarms?.onAlarm?.addListener(async (alarm) => {
+  if (alarm.name === PAIRING_SECRET_ALARM) await queuePairingSecretOperation(maintainPairingSecret);
+  if (alarm.name === PENDING_CLEANUP_ALARM) await queuePendingMaintenance();
+});
+
+storageAccessReady.then(() => {
+  if (!storageAccessError) {
+    queuePairingSecretOperation(maintainPairingSecret).catch(() => {});
+    queuePendingMaintenance().catch(() => {});
+  }
+});
+
 async function connectionState() {
+  await requireTrustedStorageAccess();
   if (DEV_MODE) {
-    const token = globalThis.REDLINE_CONFIG.token;
+    const token = DEV_CONFIG.token;
     if (typeof token !== 'string' || !token) {
       throw new RedlineExtensionError('connection_required', 'Redline contributor mode needs setup again before submitting.');
     }
@@ -31,8 +131,9 @@ async function connectionState() {
   const connection = stored?.[CONNECTION_KEY];
   if (!connection || typeof connection !== 'object' ||
       !/^rlc_[0-9a-f]{32}$/.test(connection.client_id || '') ||
-      typeof connection.token !== 'string' || !connection.token ||
+      typeof connection.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(connection.token) ||
       !Number.isSafeInteger(connection.clear_generation) || connection.clear_generation < 0 ||
+      connection.consent_version !== 1 ||
       (connection.port !== undefined && connection.port !== 7878)) {
     throw new RedlineExtensionError('connection_required', 'Redline needs to be connected again before submitting.');
   }
@@ -212,15 +313,24 @@ async function durableDraftIdentity(msg, sender) {
   return { sourceHash, storageKey: `redline_pending::draft_${keyHash}` };
 }
 
-function validatePendingDraft(value, sourceHash, connection, version = 2) {
+function canonicalTimestamp(value) {
+  const parsed = typeof value === 'string' ? Date.parse(value) : NaN;
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
+function validatePendingDraft(value, sourceHash, connection, version = 3) {
   const keys = value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).sort().join(',') : '';
   const expectedKeys = version === 1
     ? 'client_id,operation_id,payload,source_hash,version'
-    : 'client_id,operation_id,payload,payload_hash,source_hash,version';
+    : version === 2
+      ? 'client_id,operation_id,payload,payload_hash,source_hash,version'
+      : 'client_id,created_at,expires_at,operation_id,payload,payload_hash,source_hash,version';
   if (keys !== expectedKeys || value.version !== version ||
       value.client_id !== connection.clientId || value.source_hash !== sourceHash ||
       typeof value.operation_id !== 'string' || !OPERATION_ID_PATTERN.test(value.operation_id) ||
-      (version === 2 && !/^[0-9a-f]{64}$/.test(value.payload_hash || '')) ||
+      (version >= 2 && !/^[0-9a-f]{64}$/.test(value.payload_hash || '')) ||
+      (version === 3 && (!canonicalTimestamp(value.created_at) || !canonicalTimestamp(value.expires_at) ||
+        Date.parse(value.expires_at) - Date.parse(value.created_at) !== PENDING_TTL_MS)) ||
       !value.payload || typeof value.payload !== 'object' || Array.isArray(value.payload) ||
       value.payload.operation_id !== value.operation_id ||
       !Number.isSafeInteger(value.payload.clear_generation) || value.payload.clear_generation < 0) {
@@ -296,9 +406,31 @@ async function pendingDatabaseRequest(mode, makeRequest) {
 
 const pendingDatabase = {
   get(key) { return pendingDatabaseRequest('readonly', (store) => store.get(key)); },
+  keys() { return pendingDatabaseRequest('readonly', (store) => store.getAllKeys()); },
   put(key, value) { return pendingDatabaseRequest('readwrite', (store) => store.put(value, key)); },
   delete(key) { return pendingDatabaseRequest('readwrite', (store) => store.delete(key)); },
 };
+
+async function maintainPendingDrafts() {
+  await requireTrustedStorageAccess();
+  const keys = await pendingDatabase.keys();
+  let nextExpiry = Infinity;
+  for (const key of keys) {
+    const pending = await pendingDatabase.get(key);
+    if (!pending || pending.version !== 3 || !canonicalTimestamp(pending.created_at) ||
+        !canonicalTimestamp(pending.expires_at) ||
+        Date.parse(pending.expires_at) - Date.parse(pending.created_at) !== PENDING_TTL_MS) continue;
+    const expiry = Date.parse(pending.expires_at);
+    if (expiry <= Date.now()) {
+      await pendingLocalRemove(key);
+      await pendingDatabase.delete(key);
+    } else {
+      nextExpiry = Math.min(nextExpiry, expiry);
+    }
+  }
+  if (Number.isFinite(nextExpiry)) await chrome.alarms.create(PENDING_CLEANUP_ALARM, { when: nextExpiry });
+  else await chrome.alarms.clear(PENDING_CLEANUP_ALARM);
+}
 
 async function pendingLocalGet(key) {
   try { return await chrome.storage.local.get(key); } catch { throw pendingStorageError(); }
@@ -314,8 +446,10 @@ async function pendingLocalRemove(key) {
 
 function pendingLocator(pending) {
   return {
-    version: 2,
+    version: 3,
     client_id: pending.client_id,
+    created_at: pending.created_at,
+    expires_at: pending.expires_at,
     source_hash: pending.source_hash,
     operation_id: pending.operation_id,
     payload_hash: pending.payload_hash,
@@ -324,7 +458,12 @@ function pendingLocator(pending) {
 
 function validatePendingLocator(value, sourceHash, connection) {
   const keys = value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).sort().join(',') : '';
-  if (keys !== 'client_id,operation_id,payload_hash,source_hash,version' || value.version !== 2 ||
+  const legacy = value?.version === 2 && keys === 'client_id,operation_id,payload_hash,source_hash,version';
+  const current = value?.version === 3 &&
+    keys === 'client_id,created_at,expires_at,operation_id,payload_hash,source_hash,version' &&
+    canonicalTimestamp(value.created_at) && canonicalTimestamp(value.expires_at) &&
+    Date.parse(value.expires_at) - Date.parse(value.created_at) === PENDING_TTL_MS;
+  if ((!legacy && !current) ||
       value.client_id !== connection.clientId || value.source_hash !== sourceHash ||
       typeof value.operation_id !== 'string' || !OPERATION_ID_PATTERN.test(value.operation_id) ||
       !/^[0-9a-f]{64}$/.test(value.payload_hash || '')) {
@@ -334,18 +473,30 @@ function validatePendingLocator(value, sourceHash, connection) {
   return value;
 }
 
+function currentPendingDraft(value) {
+  if (value.version === 3) return value;
+  const createdAt = new Date(Date.now()).toISOString();
+  return {
+    ...value,
+    version: 3,
+    created_at: createdAt,
+    expires_at: new Date(Date.parse(createdAt) + PENDING_TTL_MS).toISOString(),
+  };
+}
+
 async function loadPendingDraft(storageKey, sourceHash, connection) {
   const stored = await pendingLocalGet(storageKey);
   const local = Object.hasOwn(stored || {}, storageKey) ? stored[storageKey] : null;
   if (local?.version === 1) {
     const legacy = validatePendingDraft(local, sourceHash, connection, 1);
-    const migrated = {
+    const migrated = currentPendingDraft({
       ...legacy,
       version: 2,
       payload_hash: await sha256Text(canonicalDraftJson(legacy.payload)),
-    };
+    });
     await pendingDatabase.put(storageKey, migrated);
     await pendingLocalSet(storageKey, pendingLocator(migrated));
+    await queuePendingMaintenance();
     return migrated;
   }
   if (local !== null) validatePendingLocator(local, sourceHash, connection);
@@ -357,12 +508,23 @@ async function loadPendingDraft(storageKey, sourceHash, connection) {
     }
     return null;
   }
-  const pending = validatePendingDraft(durable, sourceHash, connection);
+  let pending = validatePendingDraft(durable, sourceHash, connection, durable.version);
+  if (pending.version === 2) {
+    pending = currentPendingDraft(pending);
+    await pendingDatabase.put(storageKey, pending);
+    await pendingLocalSet(storageKey, pendingLocator(pending));
+    await queuePendingMaintenance();
+  }
+  pending = validatePendingDraft(pending, sourceHash, connection);
+  if (Date.parse(pending.expires_at) <= Date.now()) {
+    await removePendingDraft(storageKey);
+    return null;
+  }
   if (await sha256Text(canonicalDraftJson(pending.payload)) !== pending.payload_hash) {
     throw new RedlineExtensionError('pending_submission_invalid',
       'The saved Redline submission cannot be retried safely. Discard it before trying again.');
   }
-  if (durable.version !== 2 || (local !== null && local.operation_id !== pending.operation_id)) {
+  if (pending.version !== 3 || (local !== null && local.operation_id !== pending.operation_id)) {
     throw new RedlineExtensionError('pending_submission_invalid',
       'The saved Redline submission cannot be retried safely. Discard it before trying again.');
   }
@@ -376,6 +538,10 @@ async function loadPendingDraft(storageKey, sourceHash, connection) {
 
 async function currentClearGeneration(authHeaders) {
   const { response, body } = await sidecarJson(`${BASE}/generation`, { method: 'GET' }, authHeaders);
+  if (response.status === 401) {
+    throw new RedlineExtensionError('connection_required',
+      'Redline needs a valid consented browser connection before handling page content.');
+  }
   if (!response.ok) throw sidecarError(response, body, 'GET /generation');
   if (!body || typeof body !== 'object' || Array.isArray(body) ||
       Object.keys(body).sort().join(',') !== 'clear_generation' ||
@@ -388,6 +554,7 @@ async function currentClearGeneration(authHeaders) {
 async function savePendingDraft(storageKey, pending) {
   await pendingDatabase.put(storageKey, pending);
   await pendingLocalSet(storageKey, pendingLocator(pending));
+  await queuePendingMaintenance();
 }
 
 async function removePendingDraft(storageKey) {
@@ -422,9 +589,44 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 chrome.tabs.onRemoved.addListener((tabId) => screenshotByTab.delete(tabId));
 
+chrome.runtime.onInstalled?.addListener(async (details) => {
+  if (DEV_MODE) return;
+  const tabs = await chrome.tabs.query({ url: 'http://127.0.0.1:7878/connect' });
+  for (const tab of tabs) {
+    if (!Number.isSafeInteger(tab.id) || !exactPairingTabUrl(tab.url)) continue;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, frameIds: [0] },
+        files: ['connect.js'],
+      });
+    } catch {
+      // The connect tab may close while the extension is being installed.
+    }
+  }
+  if (details?.reason === 'install') {
+    await chrome.tabs.create({ url: chrome.runtime.getURL('onboarding.html'), active: true });
+  }
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
+      if (msg.type === 'redline-stage-pairing-secret') {
+        await requireTrustedStorageAccess();
+        if (!validConnectSender(msg, sender)) {
+          throw new RedlineExtensionError('invalid_connect_sender', 'Pairing secret sender was rejected.');
+        }
+        await queuePairingSecretOperation(async () => {
+          const expiresAt = new Date(Date.now() + PAIRING_SECRET_TTL_MS).toISOString();
+          await chrome.storage.session.set({
+            [PAIRING_SECRET_KEY]: { secret: msg.secret, expires_at: expiresAt },
+          });
+          await chrome.alarms.create(PAIRING_SECRET_ALARM, { when: Date.parse(expiresAt) });
+        });
+        sendResponse({ ok: true, status: 'staged' });
+        return;
+      }
+
       if (msg.type === 'submit-redline') {
         const item = await withScreenshotLock(async () => {
           const connection = await connectionState();
@@ -451,9 +653,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             delete payload.screenshot_png;
             if (screenshot_png) payload.screenshot_png = screenshot_png;
             canonicalDraftJson(payload);
+            const createdAt = new Date(Date.now()).toISOString();
             pending = {
-              version: 2,
+              version: 3,
               client_id: connection.clientId,
+              created_at: createdAt,
+              expires_at: new Date(Date.parse(createdAt) + PENDING_TTL_MS).toISOString(),
               source_hash: identity.sourceHash,
               operation_id,
               payload,

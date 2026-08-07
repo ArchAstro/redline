@@ -188,12 +188,13 @@ async function walk(root) {
   return out;
 }
 
-async function copyTree(src, dst, dryRun, transforms = {}, modeOverrides = {}) {
+async function copyTree(src, dst, dryRun, transforms = {}, modeOverrides = {}, excluded = new Set()) {
   let changed = false;
   const wanted = new Set();
   const files = await walk(src);
   for (const file of files) {
     const rel = path.relative(src, file);
+    if (excluded.has(rel)) continue;
     wanted.add(rel);
     const target = path.join(dst, rel);
     let srcBuf = await fsp.readFile(file);
@@ -288,6 +289,13 @@ function patchExtensionAuth(raw, token, port) {
     .replace('__REDLINE_PORT__', String(port));
 }
 
+function patchExtensionBackground(raw) {
+  if (/importScripts\(['"]auth\.js['"]\)/.test(raw)) {
+    throw new Error('store extension background must not import generated auth directly');
+  }
+  return `importScripts('auth.js');\n${raw}`;
+}
+
 async function readRedlineConfig() {
   const config = await readJsonOrNull(configPath());
   return config && typeof config === 'object' && !Array.isArray(config) ? config : {};
@@ -338,12 +346,14 @@ async function syncExtension(sourceRoot, dryRun, mode) {
   const extSrc = path.join(sourceRoot, 'extension');
   const extDst = path.join(redlineRoot(), 'extension');
   if (!(await exists(extSrc))) throw new Error(`Chrome extension source missing at ${extSrc}`);
+  const devManifest = await fsp.readFile(path.join(extSrc, 'manifest.dev.json'), 'utf8');
   const authToken = await ensureAuthToken(dryRun);
   const port = redlinePort();
   const filesChanged = await copyTree(extSrc, extDst, dryRun, {
-    'manifest.json': (raw) => patchExtensionManifestForMode(raw, mode),
+    'manifest.json': () => patchExtensionManifestForMode(devManifest, mode),
     'auth.js': (raw) => patchExtensionAuth(raw, authToken, port),
-  }, { 'auth.js': 0o600 });
+    'background.js': patchExtensionBackground,
+  }, { 'auth.js': 0o600 }, new Set(['manifest.dev.json']));
   if (!dryRun) {
     await fsp.chmod(redlineRoot(), 0o700);
     await fsp.chmod(extDst, 0o700);
@@ -522,11 +532,13 @@ async function extensionStatus(sourceRoot) {
       const authToken = await readAuthToken();
       const port = redlinePort();
       const extSrc = path.join(sourceRoot, 'extension');
+      const devManifest = await fsp.readFile(path.join(extSrc, 'manifest.dev.json'), 'utf8');
       const filesOutOfSync = !authToken || (await exists(extSrc)
-        ? await copyTree(extSrc, extDst, true, {
-            'manifest.json': (raw) => patchExtensionManifestForMode(raw, mode),
+          ? await copyTree(extSrc, extDst, true, {
+            'manifest.json': () => patchExtensionManifestForMode(devManifest, mode),
             'auth.js': (raw) => patchExtensionAuth(raw, authToken, port),
-          }, { 'auth.js': 0o600 })
+            'background.js': patchExtensionBackground,
+          }, { 'auth.js': 0o600 }, new Set(['manifest.dev.json']))
         : false);
       log(`  installed: ${installedVersion}`);
       log(`  package: ${packageVersion || '(unknown)'}`);
