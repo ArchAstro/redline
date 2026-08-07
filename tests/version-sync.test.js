@@ -43,3 +43,9 @@ test('CI uses a Node release that provides the built-in SQLite test runtime', ()
   const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');
   assert.match(workflow, /node-version:\s*['"]24['"]/);
 });
+
+test('package lock root exposes the exact public binary map', () => {
+  const packageJson = readJson(ROOT, 'package.json');
+  const packageLock = readJson(ROOT, 'package-lock.json');
+  assert.deepEqual(packageLock.packages?.['']?.bin, packageJson.bin);
+});

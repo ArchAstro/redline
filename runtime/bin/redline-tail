@@ -1,3 +1,6 @@
 #!/usr/bin/env bash
+set -e
+set -o pipefail
 PORT="${REDLINE_PORT:-7878}"
-curl -s "http://127.0.0.1:$PORT/redlines" | (command -v jq >/dev/null && jq . || cat)
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+node "$HERE/lib/cli-http.js" "$PORT" GET "/redlines" | (command -v jq >/dev/null && jq . || cat)

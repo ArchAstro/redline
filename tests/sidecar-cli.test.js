@@ -9,6 +9,8 @@ const test = require('node:test');
 
 const ROOT = path.resolve(__dirname, '..');
 const SIDECAR = path.join(ROOT, 'runtime/bin/redline-sidecar');
+process.env.REDLINE_DEV_MODE = '1';
+process.env.REDLINE_EXTENSION_ID = 'hfjngaflcmkocibdgpeanmhjlkofibca';
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -253,6 +255,8 @@ exit 20
     REAL_NODE: process.execPath,
   };
   delete env.REDLINE_PORT;
+  delete env.REDLINE_DEV_MODE;
+  delete env.REDLINE_EXTENSION_ID;
 
   try {
     const started = spawnSync(SIDECAR, ['start'], { cwd: ROOT, env, encoding: 'utf8' });

@@ -13,6 +13,10 @@ const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+const { CliCredentialError, requestWithCliCredential } = require('../runtime/lib/cli-http');
+const { loadExtensionIdentity, validExtensionId } = require('../runtime/lib/extension-identity');
+const { findInstalledExtension } = require('./chrome-profile-discovery');
+const { assertSupportedPlatform, openBrowser } = require('./open-browser');
 
 const FULL_ACCESS_PATTERN = '<all_urls>';
 
@@ -386,6 +390,109 @@ function checkSidecar(port) {
   });
 }
 
+async function runStorePairingFlow({
+  dataRoot = redlineDataRoot(),
+  port = 7878,
+  platform = process.platform,
+  extensionId,
+  storeListingUrl,
+  extensionPresent,
+  startHelper,
+  createPairingWindow = () => requestPairingWindow({ dataRoot, port }),
+  invalidatePairing = (secret) => requestPairingInvalidation({ dataRoot, port, secret }),
+  discoverExtension = () => findInstalledExtension({ extensionId, platform }),
+  portalClient,
+  openUrl = (url) => openBrowser(url, { platform, portalClient }),
+  stdout = process.stdout,
+  stderr = process.stderr,
+} = {}) {
+  assertSupportedPlatform(platform);
+  if (!validExtensionId(extensionId)) {
+    throw new Error('Chrome Web Store identity is not configured; install a release package containing config/extension-identity.json');
+  }
+  if (typeof storeListingUrl !== 'string' || !/^https:\/\//.test(storeListingUrl)) {
+    throw new Error('Chrome Web Store listing URL is not configured');
+  }
+  if (port !== 7878) throw new Error('Chrome Web Store pairing requires loopback port 7878');
+  if (typeof startHelper !== 'function') throw new Error('Redline helper launcher is not configured');
+
+  await startHelper();
+  const installed = extensionPresent === undefined ? discoverExtension() : extensionPresent;
+  const pairing = await createPairingWindow();
+  try {
+    await openUrl(`http://127.0.0.1:7878/connect#pair=${pairing.secret}`);
+  } catch {
+    const failure = new Error('Could not open the Redline connection page. Run redline setup again.');
+    try {
+      await invalidatePairing(pairing.secret);
+    } catch {
+      failure.cause = new Error('Redline pairing cleanup failed; the pairing window will expire automatically.');
+    }
+    throw failure;
+  }
+  let openedStoreListing = false;
+  if (!installed) {
+    try {
+      await openUrl(storeListingUrl);
+      openedStoreListing = true;
+    } catch {
+      stderr.write('warning: Redline connected, but the Chrome Web Store did not open. Open the Redline listing, then run redline setup again if needed.\n');
+    }
+  }
+  stdout.write('Redline helper is ready. Finish connecting in the Redline extension.\n');
+  return { pairingExpiresAt: pairing.expiresAt, openedStoreListing };
+}
+
+async function requestPairingWindow({ dataRoot = redlineDataRoot(), port = 7878 } = {}) {
+  let response;
+  try {
+    response = await requestWithCliCredential({ dataRoot, port, method: 'POST', requestPath: '/admin/pairing', timeoutMs: 1500 });
+  } catch (error) {
+    if (error instanceof CliCredentialError) throw new Error('Redline CLI credential is missing or unsafe; rerun redline setup');
+    throw new Error('Redline helper pairing request failed');
+  }
+  let body;
+  try { body = JSON.parse(response.body.toString('utf8')); } catch {
+    throw new Error('Redline helper returned an invalid pairing response');
+  }
+  if (response.statusCode !== 201 || !body || !/^[A-Za-z0-9_-]{43}$/.test(body.secret || '') ||
+      !Number.isFinite(Date.parse(body.expires_at))) {
+    throw new Error('Redline helper refused to create a pairing window');
+  }
+  return { secret: body.secret, expiresAt: body.expires_at };
+}
+
+async function requestPairingInvalidation({ dataRoot = redlineDataRoot(), port = 7878, secret } = {}) {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(secret || '')) throw new Error('Redline pairing invalidation is invalid');
+  const payload = Buffer.from(JSON.stringify({ secret }));
+  let response;
+  try {
+    response = await requestWithCliCredential({
+      dataRoot, port, method: 'DELETE', requestPath: '/admin/pairing', body: payload, timeoutMs: 1500,
+    });
+  } catch (error) {
+    if (error instanceof CliCredentialError) throw new Error('Redline CLI credential is missing or unsafe; rerun redline setup');
+    throw new Error('Redline helper pairing invalidation failed');
+  }
+  if (response.statusCode !== 204) throw new Error('Redline helper refused to invalidate the pairing window');
+}
+
+function loadStoreIdentity(sourceRoot) {
+  const configured = process.env.REDLINE_TEST_MODE === '1' && process.env.REDLINE_IDENTITY_PATH
+    ? process.env.REDLINE_IDENTITY_PATH
+    : path.join(sourceRoot, 'config', 'extension-identity.json');
+  return loadExtensionIdentity(configured);
+}
+
+async function startInstalledHelper(sourceRoot) {
+  const launcher = path.join(sourceRoot, 'runtime', 'bin', 'redline-sidecar');
+  const result = spawnSync(launcher, ['start'], { encoding: 'utf8', env: process.env });
+  if (result.error || result.status !== 0) {
+    throw new Error('Redline helper could not start; run redline-sidecar status for details');
+  }
+  if (!await checkSidecar(7878)) throw new Error('Redline helper did not become ready on 127.0.0.1:7878');
+}
+
 async function extensionStatus(sourceRoot) {
   const extDst = path.join(redlineRoot(), 'extension');
   const manifestPath = path.join(extDst, 'manifest.json');
@@ -468,9 +575,33 @@ async function main() {
 
   const sourceRoot = opts.source ? path.resolve(opts.source) : resolvePackageRoot();
 
+  if (redlinePort() !== 7878 && process.env.REDLINE_DEV_MODE !== '1') {
+    throw new Error('non-7878 REDLINE_PORT values require explicit REDLINE_DEV_MODE=1');
+  }
+  if (redlinePort() === 7878 && process.env.REDLINE_DEV_MODE === '1') {
+    throw new Error('explicit dev mode requires a non-7878 REDLINE_PORT');
+  }
+  if (process.env.REDLINE_DEV_MODE === '1' && !validExtensionId(process.env.REDLINE_EXTENSION_ID)) {
+    throw new Error('explicit dev mode requires a valid injected REDLINE_EXTENSION_ID');
+  }
+
   if (opts.extensionStatus) {
     const ok = await extensionStatus(sourceRoot);
     process.exitCode = ok ? 0 : 1;
+    return;
+  }
+
+  const storeSetup = !opts.uninstall && !opts.dryRun && redlinePort() === 7878 && process.env.REDLINE_DEV_MODE !== '1';
+  if (storeSetup) {
+    const identity = loadStoreIdentity(sourceRoot);
+    await runStorePairingFlow({
+      ...identity,
+      dataRoot: redlineDataRoot(),
+      startHelper: () => startInstalledHelper(sourceRoot),
+      extensionPresent: process.env.REDLINE_TEST_MODE === '1' && process.env.REDLINE_EXTENSION_PRESENT !== undefined
+        ? process.env.REDLINE_EXTENSION_PRESENT === '1'
+        : undefined,
+    });
     return;
   }
 
@@ -538,5 +669,7 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().catch((error) => fail(error.stack || error.message));
+  main().catch((error) => fail(error.message));
 }
+
+module.exports = { loadStoreIdentity, requestPairingInvalidation, requestPairingWindow, runStorePairingFlow };

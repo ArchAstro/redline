@@ -1,0 +1,78 @@
+#!/usr/bin/env node
+'use strict';
+
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { CliCredentialError, requestWithCliCredential } = require('../lib/cli-http');
+
+function fail(message) {
+  process.stderr.write(`${message}\n`);
+  process.exitCode = 1;
+}
+
+function writeNewFileAtomic(outputPath, bytes) {
+  const target = path.resolve(outputPath);
+  const parent = path.dirname(target);
+  const parentStat = fs.lstatSync(parent);
+  if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+    throw new Error('output directory is unsafe');
+  }
+  const temporary = path.join(parent, `.${path.basename(target)}.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`);
+  let fd;
+  try {
+    fd = fs.openSync(temporary, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL |
+      (fs.constants.O_NOFOLLOW || 0), 0o600);
+    fs.writeFileSync(fd, bytes);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.linkSync(temporary, target);
+    fs.unlinkSync(temporary);
+    const dirFd = fs.openSync(parent, fs.constants.O_RDONLY);
+    try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+  } catch (error) {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+    try { fs.unlinkSync(temporary); } catch {}
+    throw error;
+  }
+}
+
+async function main() {
+  const [screenshotId, outputPath, ...extra] = process.argv.slice(2);
+  if (extra.length || !/^ss_[a-z0-9]+$/.test(screenshotId || '') || typeof outputPath !== 'string' ||
+      outputPath.length === 0 || outputPath.length > 4096 || /[\0\r\n]/.test(outputPath)) {
+    fail('usage: redline-screenshot <screenshot_id> <output.png>');
+    return;
+  }
+  let response;
+  try {
+    response = await requestWithCliCredential({
+      dataRoot: path.resolve(process.env.REDLINE_DIR || path.join(os.homedir(), '.redline')),
+      port: process.env.REDLINE_PORT || '7878',
+      method: 'GET',
+      requestPath: `/screenshots/${screenshotId}`,
+    });
+  } catch (error) {
+    fail(error instanceof CliCredentialError
+      ? 'Redline CLI credential is missing or unsafe; rerun redline setup.'
+      : 'Redline screenshot request failed.');
+    return;
+  }
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    fail(`Redline screenshot request failed (HTTP ${response.statusCode}).`);
+    return;
+  }
+  try {
+    writeNewFileAtomic(outputPath, response.body);
+  } catch {
+    fail('Redline screenshot output must be a new file in a real local directory.');
+  }
+}
+
+if (require.main === module) main();
+
+module.exports = { writeNewFileAtomic };

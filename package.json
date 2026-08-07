@@ -10,11 +10,13 @@
     "redline-pull": "runtime/bin/redline-pull",
     "redline-watch": "runtime/bin/redline-watch",
     "redline-tail": "runtime/bin/redline-tail",
+    "redline-screenshot": "runtime/bin/redline-screenshot",
     "redline-clear": "runtime/bin/redline-clear"
   },
   "files": [
     "setup/",
     "runtime/",
+    "config/",
     "skills/",
     "extension/",
     "docs/assets/"
@@ -65,5 +67,8 @@
     "redline",
     "visual-feedback",
     "ui-review"
-  ]
+  ],
+  "dependencies": {
+    "@homebridge/dbus-native": "0.7.7"
+  }
 }

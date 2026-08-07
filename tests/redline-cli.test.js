@@ -11,7 +11,10 @@ const CLI = path.join(ROOT, 'setup/redline.js');
 function runRedline(args, home) {
   return spawnSync(process.execPath, [CLI, ...args], {
     cwd: ROOT,
-    env: { ...process.env, HOME: home, REDLINE_PORT: '65534' },
+    env: {
+      ...process.env, HOME: home, REDLINE_PORT: '65534', REDLINE_DEV_MODE: '1',
+      REDLINE_EXTENSION_ID: 'hfjngaflcmkocibdgpeanmhjlkofibca',
+    },
     encoding: 'utf8',
   });
 }

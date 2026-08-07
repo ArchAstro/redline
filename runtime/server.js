@@ -6,6 +6,9 @@ const crypto = require('crypto');
 const os = require('os');
 const { healthPayload, parseInstanceId, parseLaunchId, parsePort } = require('./lib/protocol');
 const { inspectLifecycleFile, parseLaunchMetadata, removeLifecycleFile } = require('./lib/sidecar-lifecycle');
+const { bearerToken, readPrivateCredential, verifySecret, hashSecret } = require('./lib/auth');
+const { loadExtensionIdentity, validExtensionId } = require('./lib/extension-identity');
+const { StateStore } = require('./lib/state-store');
 
 let PORT;
 try {
@@ -15,6 +18,46 @@ try {
   process.exit(1);
 }
 const ROOT = process.env.REDLINE_DIR || path.join(os.homedir(), '.redline');
+const DEV_MODE = process.env.REDLINE_DEV_MODE === '1';
+const TEST_MODE = process.env.REDLINE_TEST_MODE === '1';
+if (DEV_MODE && PORT === 7878) {
+  console.error('explicit dev mode requires a non-7878 REDLINE_PORT');
+  process.exit(1);
+}
+let LISTEN_PORT = PORT;
+if (TEST_MODE && process.env.REDLINE_LISTEN_PORT !== undefined) {
+  try { LISTEN_PORT = parsePort(process.env.REDLINE_LISTEN_PORT); } catch (error) {
+    console.error(`REDLINE_LISTEN_PORT is invalid: ${error.message}`);
+    process.exit(1);
+  }
+}
+if (PORT !== 7878 && !DEV_MODE) {
+  console.error('non-7878 REDLINE_PORT values require explicit REDLINE_DEV_MODE=1');
+  process.exit(1);
+}
+
+function loadExtensionId() {
+  if (DEV_MODE) {
+    if (!validExtensionId(process.env.REDLINE_EXTENSION_ID)) {
+      throw new Error('explicit dev mode requires a valid injected REDLINE_EXTENSION_ID');
+    }
+    return process.env.REDLINE_EXTENSION_ID;
+  }
+  const identityFile = TEST_MODE && process.env.REDLINE_IDENTITY_PATH
+    ? process.env.REDLINE_IDENTITY_PATH
+    : path.resolve(__dirname, '../config/extension-identity.json');
+  return loadExtensionIdentity(identityFile).extensionId;
+}
+
+let EXTENSION_ID;
+try { EXTENSION_ID = loadExtensionId(); } catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
+const EXTENSION_ORIGIN = `chrome-extension://${EXTENSION_ID}`;
+const EXPECTED_HOST = `127.0.0.1:${PORT}`;
+const stateStore = new StateStore(ROOT);
+const DEV_BROWSER_CREDENTIAL = path.join(ROOT, 'auth-token');
 
 function exactArgument(name) {
   const prefix = `--${name}=`;
@@ -50,7 +93,6 @@ try {
 }
 const DB = path.join(ROOT, 'redlines.json');
 const SHOTS = path.join(ROOT, 'screenshots');
-const AUTH_TOKEN_FILE = path.join(ROOT, 'auth-token');
 
 fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 });
 fs.chmodSync(ROOT, 0o700);
@@ -64,7 +106,6 @@ fs.mkdirSync(SHOTS, { recursive: true, mode: 0o700 });
 fs.chmodSync(SHOTS, 0o700);
 if (!fs.existsSync(DB)) fs.writeFileSync(DB, '[]', { mode: 0o600 });
 fs.chmodSync(DB, 0o600);
-if (fs.existsSync(AUTH_TOKEN_FILE)) fs.chmodSync(AUTH_TOKEN_FILE, 0o600);
 for (const entry of fs.readdirSync(SHOTS, { withFileTypes: true })) {
   if (entry.isFile() && entry.name.endsWith('.png')) {
     fs.chmodSync(path.join(SHOTS, entry.name), 0o600);
@@ -113,57 +154,98 @@ function mkid(prefix) {
   return `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
 }
 
+class HttpRequestError extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
 function readBody(req, limitMB = 20) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let settled = false;
     const limit = limitMB * 1024 * 1024;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback(value);
+    };
+    const timer = setTimeout(() => {
+      req.resume();
+      finish(reject, new HttpRequestError(408, 'request_timeout', 'request body deadline exceeded'));
+    }, 3000);
     req.on('data', (c) => {
+      if (settled) return;
       size += c.length;
       if (size > limit) {
-        reject(new Error('payload too large'));
-        req.destroy();
+        req.resume();
+        finish(reject, new HttpRequestError(413, 'payload_too_large', 'request body is too large'));
         return;
       }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
+    req.on('end', () => finish(resolve, Buffer.concat(chunks)));
+    req.on('error', (error) => finish(reject, error));
+    req.on('aborted', () => finish(reject, new HttpRequestError(400, 'invalid_request', 'request body was aborted')));
   });
 }
 
+async function readJsonBody(req, limitMB = 1) {
+  if (!validJsonContentType(req)) {
+    throw new HttpRequestError(415, 'unsupported_media_type', 'request requires application/json');
+  }
+  const raw = await readBody(req, limitMB);
+  try { return JSON.parse(raw.toString('utf8')); } catch {
+    throw new HttpRequestError(400, 'invalid_json', 'request body contains invalid JSON');
+  }
+}
+
+async function readJsonObject(req, limitMB = 1) {
+  const body = await readJsonBody(req, limitMB);
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new HttpRequestError(400, 'invalid_json_object', 'request body must be a JSON object');
+  }
+  return body;
+}
+
 function requestOrigin(req) {
-  return req.headers.origin || null;
+  return typeof req.headers.origin === 'string' ? req.headers.origin : null;
 }
 
 function isAllowedOrigin(origin) {
-  return !origin || /^chrome-extension:\/\/[a-z0-9]{8,}$/i.test(origin);
+  return origin === null || origin === EXTENSION_ORIGIN;
 }
 
-function extensionRequestIsAuthorized(req) {
-  const origin = requestOrigin(req);
-  if (!origin || req.method === 'OPTIONS') return true;
-  let expected;
-  try {
-    expected = fs.readFileSync(AUTH_TOKEN_FILE, 'utf8').trim();
-  } catch {
-    return false;
+function exactHost(req) {
+  return req.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === 'host').length === 1 &&
+    req.headers.host === EXPECTED_HOST;
+}
+
+const SINGLETON_SECURITY_HEADERS = new Set([
+  'host', 'origin', 'authorization', 'content-type', 'content-length', 'transfer-encoding',
+  'x-redline-protocol', 'x-redline-token', 'access-control-request-method', 'access-control-request-headers',
+]);
+
+function duplicateSecurityHeader(req) {
+  const counts = new Map();
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    const name = req.rawHeaders[index].toLowerCase();
+    if (!SINGLETON_SECURITY_HEADERS.has(name)) continue;
+    counts.set(name, (counts.get(name) || 0) + 1);
+    if (counts.get(name) > 1) return name;
   }
-  const provided = req.headers['x-redline-token'];
-  if (typeof provided !== 'string' || !expected) return false;
-  const expectedBuffer = Buffer.from(expected);
-  const providedBuffer = Buffer.from(provided);
-  return expectedBuffer.length === providedBuffer.length &&
-    crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+  return null;
 }
 
 function corsHeaders(req, headers = {}) {
   const origin = requestOrigin(req);
-  if (!origin) return headers;
+  if (origin !== EXTENSION_ORIGIN) return headers;
   return {
-    'access-control-allow-origin': origin,
-    'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type, x-redline-token',
+    'access-control-allow-origin': EXTENSION_ORIGIN,
     vary: 'Origin',
     ...headers,
   };
@@ -179,32 +261,171 @@ function send(req, res, status, body, headers = {}) {
   res.end(data);
 }
 
+function errorResponse(req, res, status, code, message) {
+  return send(req, res, status, { error: { code, message } });
+}
+
+function validJsonContentType(req) {
+  return /^application\/json(?:;\s*charset=utf-8)?$/i.test(req.headers['content-type'] || '');
+}
+
+function protectedRouteSupports(pathname, method) {
+  if (pathname === '/redlines') return ['GET', 'POST'].includes(method);
+  if (/^\/redlines\/[^/]+\/ack$/.test(pathname)) return method === 'POST';
+  if (/^\/redlines\/[^/]+$/.test(pathname)) return ['PATCH', 'DELETE'].includes(method);
+  if (pathname === '/screenshots') return method === 'POST';
+  if (/^\/screenshots\/[^/]+$/.test(pathname)) return method === 'GET';
+  return false;
+}
+
+function parseRequestedHeaders(value) {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  const rawTokens = value.split(',');
+  if (rawTokens.some((token) => token.trim().length === 0)) return null;
+  const tokens = rawTokens.map((token) => token.trim().toLowerCase());
+  if (tokens.some((token) => !/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(token)) || new Set(tokens).size !== tokens.length) {
+    return null;
+  }
+  return tokens;
+}
+
+async function requestIsAuthorized(req) {
+  if (DEV_MODE && requestOrigin(req) === EXTENSION_ORIGIN && typeof req.headers['x-redline-token'] === 'string') {
+    try {
+      const expected = readPrivateCredential(DEV_BROWSER_CREDENTIAL);
+      return verifySecret(req.headers['x-redline-token'], hashSecret(expected));
+    } catch {
+      return false;
+    }
+  }
+  const token = bearerToken(req.headers.authorization);
+  if (!token) return false;
+  if (requestOrigin(req) === EXTENSION_ORIGIN) return Boolean(await stateStore.verifyClientToken(token));
+  if (requestOrigin(req) === null) return stateStore.verifyCliToken(token);
+  return false;
+}
+
+const CONNECT_HTML = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect Redline</title><body><main><h1>Connect Redline</h1><p>Open the Redline extension to review the local-data disclosure and finish connecting this Chrome profile.</p></main></body></html>';
+
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  if (duplicateSecurityHeader(req)) {
+    return errorResponse(req, res, 400, 'duplicate_header', 'request contains a duplicate security header');
+  }
+  if (!exactHost(req)) return errorResponse(req, res, 400, 'invalid_host', 'request host is not the Redline loopback service');
+  const url = new URL(req.url, `http://${EXPECTED_HOST}`);
   const route = `${req.method} ${url.pathname}`;
 
   if (!isAllowedOrigin(requestOrigin(req))) {
-    res.writeHead(403, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'forbidden origin' }));
+    return errorResponse(req, res, 403, 'forbidden_origin', 'request origin is not allowed');
   }
 
-  if (req.method === 'OPTIONS') return send(req, res, 204, '');
-
-  if (route !== 'GET /health' && !extensionRequestIsAuthorized(req)) {
-    return send(req, res, 401, { error: 'missing or invalid Redline capability token' });
+  if (req.method === 'OPTIONS') {
+    const requestedMethod = req.headers['access-control-request-method'];
+    const requestedHeaders = parseRequestedHeaders(req.headers['access-control-request-headers']);
+    if (requestOrigin(req) !== EXTENSION_ORIGIN) {
+      return errorResponse(req, res, 403, 'forbidden_preflight', 'pairing preflight is not allowed');
+    }
+    if (url.pathname === '/pair' && requestedMethod === 'POST' && requestedHeaders &&
+        requestedHeaders.length === 2 && requestedHeaders.includes('content-type') &&
+        requestedHeaders.includes('x-redline-protocol')) {
+      return send(req, res, 204, '', {
+        'access-control-allow-methods': 'POST',
+        'access-control-allow-headers': 'Content-Type, X-Redline-Protocol',
+        'cache-control': 'no-store',
+      });
+    }
+    const protectedAuthHeader = DEV_MODE && requestedHeaders?.includes('x-redline-token')
+      ? 'x-redline-token'
+      : 'authorization';
+    if (requestedHeaders && protectedRouteSupports(url.pathname, requestedMethod) && requestedHeaders.includes(protectedAuthHeader) &&
+        requestedHeaders.every((header) => [protectedAuthHeader, 'content-type'].includes(header))) {
+      const allowedHeaders = [protectedAuthHeader, 'content-type']
+        .filter((header) => requestedHeaders.includes(header))
+        .map((header) => {
+          if (header === 'authorization') return 'Authorization';
+          if (header === 'x-redline-token') return 'X-Redline-Token';
+          return 'Content-Type';
+        });
+      return send(req, res, 204, '', {
+        'access-control-allow-methods': requestedMethod,
+        'access-control-allow-headers': allowedHeaders.join(', '),
+        'cache-control': 'no-store',
+      });
+    }
+    return errorResponse(req, res, 403, 'forbidden_preflight', 'request preflight is not allowed');
   }
 
   try {
     if (route === 'GET /health') {
+      const pairing = await stateStore.pairingStatus();
       return send(req, res, 200, healthPayload({
         instanceId: INSTANCE_ID,
         launchId: LAUNCH_ID,
         directory: LAUNCH_DIRECTORY,
+        pairing,
       }), { 'cache-control': 'no-store' });
     }
 
+    if (route === 'GET /connect') {
+      return send(req, res, 200, CONNECT_HTML, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+      });
+    }
+
+    if (route === 'POST /pair') {
+      if (requestOrigin(req) !== EXTENSION_ORIGIN) {
+        return errorResponse(req, res, 403, 'forbidden_origin', 'pairing requires the Redline extension');
+      }
+      if (req.headers['x-redline-protocol'] !== '1') {
+        return errorResponse(req, res, 400, 'incompatible_protocol', 'pairing requires Redline protocol major 1');
+      }
+      if (!validJsonContentType(req)) {
+        return errorResponse(req, res, 415, 'unsupported_media_type', 'pairing requires application/json');
+      }
+      const body = await readJsonObject(req, 1);
+      if (typeof body.secret !== 'string') {
+        return errorResponse(req, res, 400, 'invalid_request', 'pairing request is invalid');
+      }
+      const client = await stateStore.consumePairingSecret(body.secret);
+      if (!client) return errorResponse(req, res, 401, 'invalid_pairing_secret', 'pairing secret is invalid or expired');
+      return send(req, res, 201, {
+        client_id: client.clientId,
+        token: client.token,
+        clear_generation: client.clearGeneration,
+      }, { 'cache-control': 'no-store' });
+    }
+
+    if (!await requestIsAuthorized(req)) {
+      return errorResponse(req, res, 401, 'unauthorized', 'missing or invalid Redline bearer token');
+    }
+
+    if (route === 'POST /admin/pairing') {
+      if (requestOrigin(req) !== null) {
+        return errorResponse(req, res, 403, 'forbidden_origin', 'pairing administration is CLI-only');
+      }
+      const pairing = await stateStore.createPairingWindow();
+      return send(req, res, 201, {
+        secret: pairing.secret,
+        expires_at: pairing.expiresAt,
+      }, { 'cache-control': 'no-store' });
+    }
+
+    if (route === 'DELETE /admin/pairing') {
+      if (requestOrigin(req) !== null) {
+        return errorResponse(req, res, 403, 'forbidden_origin', 'pairing administration is CLI-only');
+      }
+      const body = await readJsonObject(req, 1);
+      if (typeof body.secret !== 'string') {
+        return errorResponse(req, res, 400, 'invalid_request', 'pairing invalidation request is invalid');
+      }
+      await stateStore.invalidatePairingWindow(body.secret);
+      return send(req, res, 204, '', { 'cache-control': 'no-store' });
+    }
+
     if (route === 'POST /redlines') {
-      const body = JSON.parse((await readBody(req)).toString('utf8'));
+      const body = await readJsonObject(req, 1);
       const item = {
         id: mkid('rl'),
         created_at: new Date().toISOString(),
@@ -249,7 +470,7 @@ const server = http.createServer(async (req, res) => {
 
     const updateMatch = url.pathname.match(/^\/redlines\/([^/]+)$/);
     if (req.method === 'PATCH' && updateMatch) {
-      const body = JSON.parse((await readBody(req)).toString('utf8'));
+      const body = await readJsonObject(req, 1);
       const items = readDB();
       const item = items.find((i) => i.id === updateMatch[1]);
       if (!item) return send(req, res, 404, { error: 'not found' });
@@ -273,7 +494,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (route === 'POST /screenshots') {
-      const body = JSON.parse((await readBody(req)).toString('utf8'));
+      const body = await readJsonObject(req, 20);
       const m = (body.data_url || '').match(/^data:image\/png;base64,(.+)$/);
       if (!m) return send(req, res, 400, { error: 'expected { data_url: "data:image/png;base64,..." }' });
       const buf = Buffer.from(m[1], 'base64');
@@ -290,8 +511,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     send(req, res, 404, { error: 'not found', route });
-  } catch (e) {
-    send(req, res, 500, { error: e.message });
+  } catch (error) {
+    if (error instanceof HttpRequestError) {
+      return errorResponse(req, res, error.status, error.code, error.message);
+    }
+    send(req, res, 500, { error: 'Redline request failed' });
   }
 });
 
@@ -367,10 +591,19 @@ if (typeof process.send === 'function') {
   });
 }
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`redline sidecar listening on http://127.0.0.1:${PORT}`);
-  console.log(`data dir: ${ROOT}`);
-  if (typeof process.send === 'function') {
-    process.send({ type: 'redline-ready', pid: process.pid, instanceId: INSTANCE_ID, launchId: LAUNCH_ID });
-  }
+async function startServer() {
+  await stateStore.ensureCliCredential();
+  server.listen(LISTEN_PORT, '127.0.0.1', () => {
+    console.log(`redline sidecar listening on http://127.0.0.1:${LISTEN_PORT}`);
+    console.log(`data dir: ${ROOT}`);
+    if (typeof process.send === 'function') {
+      process.send({ type: 'redline-ready', pid: process.pid, instanceId: INSTANCE_ID, launchId: LAUNCH_ID });
+    }
+  });
+}
+
+startServer().catch((error) => {
+  console.error(`Redline state initialization failed: ${error.message}`);
+  cleanUncommittedLaunch();
+  process.exit(1);
 });

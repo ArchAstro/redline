@@ -46,16 +46,18 @@ test('protocol constants are deeply immutable', () => {
 });
 
 test('compatible health tolerates a higher minor version and unknown fields', () => {
+  const expiry = '2026-08-07T12:00:00.000Z';
   const result = checkHealthCompatibility({
     ...validHealth(),
     protocol: { major: 1, minor: 7, patch: 3 },
-    pairing: { available: true, expires_at: 'later' },
+    pairing: { available: true, expires_at: expiry },
     future_field: { supported: true },
   });
 
   assert.deepEqual(result, {
     compatible: true,
     pairingAvailable: true,
+    pairingExpiresAt: expiry,
     processId: process.pid,
     instanceId: INSTANCE_ID,
     launchId: LAUNCH_ID,
@@ -266,6 +268,22 @@ test('health parses pairing availability only from an explicit boolean', () => {
     instanceId: INSTANCE_ID,
     launchId: LAUNCH_ID,
     directory: DIRECTORY,
+  });
+  for (const pairing of [
+    { available: true },
+    { available: true, expires_at: 'later' },
+    { available: true, expires_at: '2026-08-07T12:00:00Z' },
+  ]) {
+    assert.deepEqual(checkHealthCompatibility({ ...validHealth(), pairing }), {
+      compatible: false,
+      reason: 'available pairing must include a valid ISO expiry',
+    });
+  }
+  assert.deepEqual(checkHealthCompatibility({
+    ...validHealth(), pairing: { available: false, expires_at: '2026-08-07T12:00:00.000Z' },
+  }), {
+    compatible: false,
+    reason: 'unavailable pairing must not include an expiry',
   });
 });
 
