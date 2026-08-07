@@ -1,6 +1,34 @@
-#!/usr/bin/env bash
-set -e
-DIR="${REDLINE_DIR:-$HOME/.redline}"
-rm -f "$DIR/redlines.json"
-rm -f "$DIR/screenshots/"*.png
-echo "cleared redlines and screenshots from $DIR"
+#!/usr/bin/env node
+'use strict';
+
+const { requestWithCliCredential } = require('../lib/cli-http');
+
+async function main() {
+  let response;
+  try {
+    response = await requestWithCliCredential({
+      port: process.env.REDLINE_PORT || '7878',
+      method: 'POST',
+      requestPath: '/admin/clear',
+    });
+  } catch {
+    process.stderr.write('Unable to reach Redline securely; run redline setup and try again.\n');
+    process.exitCode = 1;
+    return;
+  }
+  if (response.statusCode !== 200) {
+    process.stderr.write(`Redline clear failed (HTTP ${response.statusCode}).\n`);
+    process.exitCode = 1;
+    return;
+  }
+  let body;
+  try { body = JSON.parse(response.body.toString('utf8')); } catch { body = null; }
+  if (!body || !Number.isSafeInteger(body.clear_generation) || body.clear_generation < 1) {
+    process.stderr.write('Redline clear returned an invalid response.\n');
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(`Cleared local Redline data; generation ${body.clear_generation}. Clear browser drafts in each Chrome profile separately.\n`);
+}
+
+main();

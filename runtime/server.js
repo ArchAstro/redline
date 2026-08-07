@@ -2,13 +2,12 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const os = require('os');
 const { healthPayload, parseInstanceId, parseLaunchId, parsePort } = require('./lib/protocol');
 const { inspectLifecycleFile, parseLaunchMetadata, removeLifecycleFile } = require('./lib/sidecar-lifecycle');
 const { bearerToken, readPrivateCredential, verifySecret, hashSecret } = require('./lib/auth');
 const { loadExtensionIdentity, validExtensionId } = require('./lib/extension-identity');
-const { StateStore } = require('./lib/state-store');
+const { StateStore, StateStoreError } = require('./lib/state-store');
 
 let PORT;
 try {
@@ -91,9 +90,6 @@ try {
   console.error(`Redline launch identity is invalid: ${error.message}`);
   process.exit(1);
 }
-const DB = path.join(ROOT, 'redlines.json');
-const SHOTS = path.join(ROOT, 'screenshots');
-
 fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 });
 fs.chmodSync(ROOT, 0o700);
 const rootIdentity = fs.lstatSync(ROOT, { bigint: true });
@@ -102,58 +98,6 @@ if (!rootIdentity.isDirectory() || rootIdentity.isSymbolicLink() ||
   console.error('Redline launch directory identity does not match REDLINE_DIR');
   process.exit(1);
 }
-fs.mkdirSync(SHOTS, { recursive: true, mode: 0o700 });
-fs.chmodSync(SHOTS, 0o700);
-if (!fs.existsSync(DB)) fs.writeFileSync(DB, '[]', { mode: 0o600 });
-fs.chmodSync(DB, 0o600);
-for (const entry of fs.readdirSync(SHOTS, { withFileTypes: true })) {
-  if (entry.isFile() && entry.name.endsWith('.png')) {
-    fs.chmodSync(path.join(SHOTS, entry.name), 0o600);
-  }
-}
-
-function readDB() {
-  let raw;
-  try {
-    raw = fs.readFileSync(DB, 'utf8');
-  } catch (error) {
-    throw new Error(`cannot read Redline store: ${error.message}`);
-  }
-  let items;
-  try {
-    items = JSON.parse(raw);
-  } catch {
-    throw new Error('Redline store contains invalid JSON; refusing to overwrite it');
-  }
-  if (!Array.isArray(items)) {
-    throw new Error('Redline store must contain a JSON array; refusing to overwrite it');
-  }
-  return items;
-}
-
-function writeDB(items) {
-  const tmp = DB + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(items, null, 2), { mode: 0o600 });
-  fs.renameSync(tmp, DB);
-  fs.chmodSync(DB, 0o600);
-}
-
-// Refuse to report healthy when the store cannot be read safely. The original
-// file stays untouched so the user can inspect or recover it.
-readDB();
-
-function removeOrphanedScreenshots(remainingItems) {
-  const referenced = new Set(remainingItems.map((item) => item.screenshot_id).filter(Boolean));
-  for (const entry of fs.readdirSync(SHOTS, { withFileTypes: true })) {
-    const match = entry.isFile() && entry.name.match(/^(ss_[a-z0-9]+)\.png$/);
-    if (match && !referenced.has(match[1])) fs.rmSync(path.join(SHOTS, entry.name));
-  }
-}
-
-function mkid(prefix) {
-  return `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
-}
-
 class HttpRequestError extends Error {
   constructor(status, code, message) {
     super(message);
@@ -271,6 +215,8 @@ function validJsonContentType(req) {
 
 function protectedRouteSupports(pathname, method) {
   if (pathname === '/redlines') return ['GET', 'POST'].includes(method);
+  if (pathname === '/generation') return method === 'GET';
+  if (pathname === '/clear') return method === 'POST';
   if (/^\/redlines\/[^/]+\/ack$/.test(pathname)) return method === 'POST';
   if (/^\/redlines\/[^/]+$/.test(pathname)) return ['PATCH', 'DELETE'].includes(method);
   if (pathname === '/screenshots') return method === 'POST';
@@ -293,16 +239,18 @@ async function requestIsAuthorized(req) {
   if (DEV_MODE && requestOrigin(req) === EXTENSION_ORIGIN && typeof req.headers['x-redline-token'] === 'string') {
     try {
       const expected = readPrivateCredential(DEV_BROWSER_CREDENTIAL);
-      return verifySecret(req.headers['x-redline-token'], hashSecret(expected));
+      return verifySecret(req.headers['x-redline-token'], hashSecret(expected)) ? { kind: 'development' } : null;
     } catch {
-      return false;
+      return null;
     }
   }
   const token = bearerToken(req.headers.authorization);
-  if (!token) return false;
-  if (requestOrigin(req) === EXTENSION_ORIGIN) return Boolean(await stateStore.verifyClientToken(token));
-  if (requestOrigin(req) === null) return stateStore.verifyCliToken(token);
-  return false;
+  if (!token) return null;
+  if (requestOrigin(req) === EXTENSION_ORIGIN) {
+    return { kind: 'browser', token };
+  }
+  if (requestOrigin(req) === null) return await stateStore.verifyCliToken(token) ? { kind: 'cli' } : null;
+  return null;
 }
 
 const CONNECT_HTML = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect Redline</title><body><main><h1>Connect Redline</h1><p>Open the Redline extension to review the local-data disclosure and finish connecting this Chrome profile.</p></main></body></html>';
@@ -397,8 +345,18 @@ const server = http.createServer(async (req, res) => {
       }, { 'cache-control': 'no-store' });
     }
 
-    if (!await requestIsAuthorized(req)) {
+    const auth = await requestIsAuthorized(req);
+    if (!auth) {
       return errorResponse(req, res, 401, 'unauthorized', 'missing or invalid Redline bearer token');
+    }
+
+    if (route === 'GET /generation') {
+      if (!['browser', 'development'].includes(auth.kind)) {
+        return errorResponse(req, res, 403, 'forbidden_origin', 'generation is available only to Redline browsers');
+      }
+      const clearGeneration = await stateStore.currentGeneration(
+        auth.kind === 'browser' ? { browserToken: auth.token } : undefined);
+      return send(req, res, 200, { clear_generation: clearGeneration }, { 'cache-control': 'no-store' });
     }
 
     if (route === 'POST /admin/pairing') {
@@ -424,25 +382,33 @@ const server = http.createServer(async (req, res) => {
       return send(req, res, 204, '', { 'cache-control': 'no-store' });
     }
 
+    if (route === 'POST /admin/clear') {
+      if (auth.kind !== 'cli' || requestOrigin(req) !== null) {
+        return errorResponse(req, res, 403, 'forbidden_origin', 'clear administration is CLI-only');
+      }
+      const clearGeneration = await stateStore.clearAll();
+      return send(req, res, 200, { clear_generation: clearGeneration }, { 'cache-control': 'no-store' });
+    }
+
+    if (route === 'POST /clear') {
+      if (auth.kind !== 'browser') {
+        return errorResponse(req, res, 403, 'forbidden_origin', 'browser clear requires a paired Redline profile');
+      }
+      const clearGeneration = await stateStore.clearAll({ browserToken: auth.token });
+      return send(req, res, 200, { clear_generation: clearGeneration }, { 'cache-control': 'no-store' });
+    }
+
     if (route === 'POST /redlines') {
-      const body = await readJsonObject(req, 1);
-      const item = {
-        id: mkid('rl'),
-        created_at: new Date().toISOString(),
-        status: 'pending',
-        url: body.url || null,
-        origin: body.origin || null,
-        title: body.title || null,
-        project: body.project || null,
-        selected_text: body.selected_text || '',
-        comment: body.comment || '',
-        context: body.context || null,
-        screenshot_id: body.screenshot_id || null,
-        rect: body.rect || null,
-      };
-      const items = readDB();
-      items.push(item);
-      writeDB(items);
+      const body = await readJsonObject(req, 20);
+      if (auth.kind === 'browser') {
+        const item = await stateStore.submitRedline(null, body, { browserToken: auth.token });
+        return send(req, res, item.replayed ? 200 : 201, item);
+      }
+      if (auth.kind === 'development') {
+        const item = await stateStore.submitDevelopmentRedline(body);
+        return send(req, res, item.replayed ? 200 : 201, item);
+      }
+      const item = await stateStore.createLegacyRedline(body);
       return send(req, res, 201, item);
     }
 
@@ -450,70 +416,62 @@ const server = http.createServer(async (req, res) => {
       const status = url.searchParams.get('status');
       const origin = url.searchParams.get('origin');
       const project = url.searchParams.get('project');
-      let items = readDB();
-      if (status) items = items.filter((i) => i.status === status);
-      if (origin) items = items.filter((i) => i.origin === origin);
-      if (project) items = items.filter((i) => i.project === project);
+      const items = await stateStore.listRedlines({ status, origin, project },
+        auth.kind === 'browser' ? { browserToken: auth.token } : undefined);
       return send(req, res, 200, items);
     }
 
     const ackMatch = url.pathname.match(/^\/redlines\/([^/]+)\/ack$/);
     if (req.method === 'POST' && ackMatch) {
-      const items = readDB();
-      const item = items.find((i) => i.id === ackMatch[1]);
+      const item = await stateStore.updateRedline(ackMatch[1], {}, {
+        ack: true, ...(auth.kind === 'browser' ? { browserToken: auth.token } : {}),
+      });
       if (!item) return send(req, res, 404, { error: 'not found' });
-      item.status = 'acked';
-      item.acked_at = new Date().toISOString();
-      writeDB(items);
       return send(req, res, 200, item);
     }
 
     const updateMatch = url.pathname.match(/^\/redlines\/([^/]+)$/);
     if (req.method === 'PATCH' && updateMatch) {
       const body = await readJsonObject(req, 1);
-      const items = readDB();
-      const item = items.find((i) => i.id === updateMatch[1]);
+      const item = await stateStore.updateRedline(updateMatch[1], body,
+        auth.kind === 'browser' ? { browserToken: auth.token } : undefined);
       if (!item) return send(req, res, 404, { error: 'not found' });
-      for (const field of ['url', 'origin', 'title', 'project', 'selected_text', 'comment', 'context', 'screenshot_id', 'rect']) {
-        if (Object.prototype.hasOwnProperty.call(body, field)) item[field] = body[field] || null;
-      }
-      if (Object.prototype.hasOwnProperty.call(body, 'selected_text')) item.selected_text = body.selected_text || '';
-      if (Object.prototype.hasOwnProperty.call(body, 'comment')) item.comment = body.comment || '';
-      item.updated_at = new Date().toISOString();
-      writeDB(items);
       return send(req, res, 200, item);
     }
 
     const delMatch = url.pathname.match(/^\/redlines\/([^/]+)$/);
     if (req.method === 'DELETE' && delMatch) {
-      const items = readDB();
-      const remaining = items.filter((item) => item.id !== delMatch[1]);
-      writeDB(remaining);
-      removeOrphanedScreenshots(remaining);
+      await stateStore.deleteRedline(delMatch[1],
+        auth.kind === 'browser' ? { browserToken: auth.token } : undefined);
       return send(req, res, 204, '');
     }
 
     if (route === 'POST /screenshots') {
+      if (!DEV_MODE) return errorResponse(req, res, 404, 'not_found', 'separate screenshot upload is unavailable');
       const body = await readJsonObject(req, 20);
-      const m = (body.data_url || '').match(/^data:image\/png;base64,(.+)$/);
-      if (!m) return send(req, res, 400, { error: 'expected { data_url: "data:image/png;base64,..." }' });
-      const buf = Buffer.from(m[1], 'base64');
-      const id = mkid('ss');
-      fs.writeFileSync(path.join(SHOTS, id + '.png'), buf, { mode: 0o600 });
-      return send(req, res, 201, { id, bytes: buf.length });
+      const screenshot = await stateStore.storeDevelopmentScreenshot(body.data_url);
+      return send(req, res, 201, screenshot);
     }
 
     const shotMatch = url.pathname.match(/^\/screenshots\/([^/]+)$/);
     if (req.method === 'GET' && shotMatch) {
-      const file = path.join(SHOTS, shotMatch[1].replace(/\.png$/, '') + '.png');
-      if (!fs.existsSync(file)) return send(req, res, 404, { error: 'not found' });
-      return send(req, res, 200, fs.readFileSync(file), { 'content-type': 'image/png' });
+      const screenshot = await stateStore.readScreenshot(shotMatch[1].replace(/\.png$/, ''),
+        auth.kind === 'browser' ? { browserToken: auth.token } : undefined);
+      if (!screenshot) return send(req, res, 404, { error: 'not found' });
+      return send(req, res, 200, screenshot, { 'content-type': 'image/png' });
     }
 
     send(req, res, 404, { error: 'not found', route });
   } catch (error) {
     if (error instanceof HttpRequestError) {
       return errorResponse(req, res, error.status, error.code, error.message);
+    }
+    if (error instanceof StateStoreError) {
+      const statuses = {
+        operation_conflict: 409, operation_deleted: 410, data_cleared: 410,
+        unauthorized: 401, payload_too_large: 413,
+      };
+      return errorResponse(req, res, statuses[error.code] || 400, error.code, error.message);
     }
     send(req, res, 500, { error: 'Redline request failed' });
   }
@@ -593,6 +551,7 @@ if (typeof process.send === 'function') {
 
 async function startServer() {
   await stateStore.ensureCliCredential();
+  await stateStore.initialize();
   server.listen(LISTEN_PORT, '127.0.0.1', () => {
     console.log(`redline sidecar listening on http://127.0.0.1:${LISTEN_PORT}`);
     console.log(`data dir: ${ROOT}`);
