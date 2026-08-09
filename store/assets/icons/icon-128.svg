@@ -1,7 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title description">
   <title id="title">Redline</title>
-  <desc id="description">A white R on black with a yellow redline.</desc>
+  <desc id="description">A white R and yellow redline over the ArchAstro double-chevron mark.</desc>
+  <defs>
+    <linearGradient id="archastro-gradient" x1="24" y1="42" x2="96" y2="82" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ef3ea8"/>
+      <stop offset="1" stop-color="#7357ff"/>
+    </linearGradient>
+  </defs>
   <rect x="4" y="4" width="120" height="120" rx="18" fill="#151515"/>
-  <path d="M36 97V29h31c17 0 27 9 27 23 0 15-10 23-27 23H49m18 0 28 26" fill="none" stroke="#fff" stroke-width="12" stroke-linejoin="round"/>
-  <path d="M24 105h80" fill="none" stroke="#f5c518" stroke-width="8"/>
+  <g id="archastro-underlay" fill="none" stroke="url(#archastro-gradient)" stroke-width="8" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M23 76 48 48l25 28"/>
+    <path d="M48 76 73 48l25 28"/>
+  </g>
+  <g id="redline-mark" fill="none">
+    <path d="M36 97V29h31c17 0 27 9 27 23 0 15-10 23-27 23H49m18 0 28 26" stroke="#fff" stroke-width="12" stroke-linejoin="round"/>
+    <path d="M24 105h80" stroke="#f5c518" stroke-width="8"/>
+  </g>
 </svg>

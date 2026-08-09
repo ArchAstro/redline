@@ -133,6 +133,77 @@ test('README documents the portable skill and terminal invocation', () => {
   assert.match(read('skills/redline/SKILL.md'), /^name:\s*redline$/m);
 });
 
+test('public launch guidance distinguishes the current release from Store pairing', () => {
+  const readme = read('README.md');
+  const security = read('SECURITY.md');
+  const contributing = read('CONTRIBUTING.md');
+  const setupHelp = spawnSync(process.execPath, ['setup/redline-agent-setup.js', '--help'], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+
+  assert.match(readme, /Chrome Web Store[^.]*under review/i);
+  assert.match(readme, /npm 0\.2\.x[^.]*unpacked extension/i);
+  assert.match(readme, /npm 0\.3[^.]*Chrome Web Store/i);
+  assert.match(readme, /0\.2\.x[^.]*Claude and Codex plugin state/i);
+  assert.match(readme, /https:\/\/chromewebstore\.google\.com\/detail\/redline\/bbllmeihbcmemadgmongicpklkjjgoaf/);
+  assert.match(readme, /pair[^.]*local helper/i);
+  assert.doesNotMatch(readme, /command-line tools without an `Origin` header can access the sidecar locally/i);
+  assert.match(security, /CLI credential/i);
+  assert.match(security, /paired-browser credential/i);
+  assert.match(security, /0\.2\.x/i);
+  assert.match(security, /auth-token/i);
+  assert.match(security, /CLI requests[^.]*without\s+a credential/i);
+  assert.doesNotMatch(security, /injected into the synced unpacked extension/i);
+  assert.match(contributing, /REDLINE_DEV_MODE=1/);
+  assert.match(contributing, /REDLINE_PORT=\d+/);
+  assert.match(contributing, /separate Chrome profile/i);
+  assert.equal(setupHelp.status, 0, setupHelp.stderr || setupHelp.stdout);
+  assert.match(setupHelp.stdout, /Chrome Web Store/i);
+  assert.match(setupHelp.stdout, /pair/i);
+});
+
+test('README keeps the first-use path concise and links community policies', () => {
+  const readme = read('README.md');
+  const screenshotReferences = [...readme.matchAll(/docs\/assets\/[^)"']+\.png/g)];
+
+  assert.ok(readme.split('\n').length <= 300, 'README should stay at or below 300 lines');
+  assert.ok(screenshotReferences.length <= 2, 'README should not stack more than two screenshots');
+  assert.match(readme, /## Quickstart/);
+  assert.match(readme, /## Verify the loop/);
+  assert.match(readme, /CONTRIBUTING\.md/);
+  assert.match(readme, /SECURITY\.md/);
+  assert.match(readme, /CODE_OF_CONDUCT\.md/);
+  assert.match(readme, /github\.com\/ArchAstro\/redline\/discussions/);
+  assert.match(readme, /oss\.archastro\.ai\/redline\/privacy/);
+  assert.match(readme, /redline clear[^.]*revoke[^.]*browser/i);
+  assert.match(readme, /npx changeset/);
+  assert.doesNotMatch(readme, /npm run changeset/);
+  assert.match(read('CONTRIBUTING.md'), /npx changeset/);
+  assert.doesNotMatch(read('CONTRIBUTING.md'), /npm run changeset/);
+});
+
+test('Store-first release notes and public issue guidance cannot drift', () => {
+  const storeChangeset = read('.changeset/store-first-pairing.md');
+  const bugTemplate = read('.github/ISSUE_TEMPLATE/bug_report.yml');
+
+  assert.match(storeChangeset, /^---\n"@archastro\/redline": minor\n---$/m);
+  assert.match(storeChangeset, /Chrome Web Store/i);
+  assert.match(storeChangeset, /pair/i);
+  assert.doesNotMatch(bugTemplate, /placeholder:\s*["']?0\.2\.3/);
+  assert.match(read('store/listing/description.txt'), /--@archastro:registry=https:\/\/registry\.npmjs\.org/);
+});
+
+test('Store artwork keeps the Redline mark and ArchAstro underlay in sync', () => {
+  const iconSvg = read('store/assets/icons/icon-128.svg');
+  const extensionIcon = fs.readFileSync(path.join(root, 'extension/icon-128.png'));
+  const storeIcon = fs.readFileSync(path.join(root, 'store/assets/icons/icon-128.png'));
+
+  assert.match(iconSvg, /id="archastro-underlay"/);
+  assert.match(iconSvg, /id="redline-mark"/);
+  assert.deepEqual(extensionIcon, storeIcon);
+});
+
 test('pull skill applies straightforward redlines without confirmation and keeps safety gates', () => {
   const skill = read('skills/redline/SKILL.md');
 

@@ -29,8 +29,8 @@ body:
     id: version
     attributes:
       label: Redline version
-      description: Run `redline status` and include the installed/package version.
-      placeholder: "0.2.3"
+      description: Include the installed package version.
+      placeholder: "Output from: npm list -g @archastro/redline"
     validations:
       required: true
   - type: dropdown
@@ -49,8 +49,9 @@ body:
     attributes:
       label: Extension mode
       options:
-        - full-access (`redline setup --with-screenshots`)
-        - local-only (`redline setup --local-only`)
+        - Chrome Web Store
+        - unpacked full-access (`redline setup --with-screenshots`)
+        - unpacked local-only (`redline setup --local-only`)
         - not sure
     validations:
       required: true
