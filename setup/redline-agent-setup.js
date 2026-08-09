@@ -15,6 +15,7 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { CliCredentialError, requestWithCliCredential } = require('../runtime/lib/cli-http');
 const { loadExtensionIdentity, validExtensionId } = require('../runtime/lib/extension-identity');
+const { healthProbe } = require('../runtime/lib/sidecar-lifecycle');
 const { findInstalledExtension } = require('./chrome-profile-discovery');
 const { assertSupportedPlatform, openBrowser } = require('./open-browser');
 
@@ -103,17 +104,23 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  log(`redline-agent-setup — configure the Redline Chrome extension
+  log(`redline-agent-setup - configure the Redline Chrome extension
 
 Usage:
-  redline-agent-setup                # sync the local Chrome extension
-  redline-agent-setup --uninstall    # remove the local Chrome extension
+  redline-agent-setup                # start helper and pair Store extension
+  redline-agent-setup --extension-status
+                                   # check extension presence + helper health
+
+Chrome Web Store:
+  Install Redline from the Chrome Web Store, then run this command. It opens
+  a short-lived local consent page used to pair the extension with the helper.
+
+Unpacked development only:
   redline-agent-setup --dry-run      # print what would change without writing
   redline-agent-setup --with-screenshots
                                    # enable full page access for screenshots
   redline-agent-setup --local-only   # switch back to the low-permission mode
-  redline-agent-setup --extension-status
-                                   # check Chrome extension sync + sidecar
+  redline-agent-setup --uninstall    # remove generated unpacked extension
 
 Options:
   --source PATH          Override the package source dir (development/testing).
@@ -505,7 +512,42 @@ async function startInstalledHelper(sourceRoot) {
   if (!await checkSidecar(7878)) throw new Error('Redline helper did not become ready on 127.0.0.1:7878');
 }
 
-async function extensionStatus(sourceRoot) {
+async function storeExtensionStatus(sourceRoot) {
+  const { extensionId, storeListingUrl } = loadStoreIdentity(sourceRoot);
+  const extensionPresent = process.env.REDLINE_TEST_MODE === '1' && process.env.REDLINE_EXTENSION_PRESENT !== undefined
+    ? process.env.REDLINE_EXTENSION_PRESENT === '1'
+    : findInstalledExtension({ extensionId, platform: process.platform });
+  const helperStatus = process.env.REDLINE_TEST_MODE === '1' && process.env.REDLINE_TEST_HELPER_UP !== undefined
+    ? (process.env.REDLINE_TEST_HELPER_UP === '1' ? { kind: 'compatible' } : { kind: 'refused' })
+    : await healthProbe(7878);
+
+  log(color('bold', 'Chrome Web Store extension status'));
+  let ok = true;
+  if (extensionPresent) {
+    log(`  ${color('green', 'extension:')} installed and enabled in the active Chrome profile`);
+  } else {
+    ok = false;
+    log(`  ${color('red', 'Chrome Web Store extension: missing')}`);
+    log('  Install: ' + color('bold', storeListingUrl));
+  }
+
+  if (helperStatus.kind === 'compatible') {
+    log(`  ${color('green', 'helper:')} up at http://127.0.0.1:7878`);
+  } else if (helperStatus.kind === 'incompatible') {
+    ok = false;
+    log(`  ${color('red', 'helper:')} incompatible at http://127.0.0.1:7878`);
+    log('  Run: ' + color('bold', 'redline restart'));
+  } else {
+    ok = false;
+    log(`  ${color('red', 'helper:')} down at http://127.0.0.1:7878`);
+    log('  Run: ' + color('bold', 'redline setup'));
+  }
+
+  log(`  ${color('cyan', 'popup:')} verify that this Chrome profile is paired`);
+  return ok;
+}
+
+async function unpackedExtensionStatus(sourceRoot) {
   const extDst = path.join(redlineRoot(), 'extension');
   const manifestPath = path.join(extDst, 'manifest.json');
   const packageVersion = readPackageVersion(sourceRoot);
@@ -579,6 +621,11 @@ async function extensionStatus(sourceRoot) {
   log('  6. If Redline is disabled, toggle it back on');
 
   return ok;
+}
+
+async function extensionStatus(sourceRoot) {
+  const storeMode = redlinePort() === 7878 && process.env.REDLINE_DEV_MODE !== '1';
+  return storeMode ? storeExtensionStatus(sourceRoot) : unpackedExtensionStatus(sourceRoot);
 }
 
 async function main() {

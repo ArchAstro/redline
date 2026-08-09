@@ -25,6 +25,21 @@ function runStatus(home, envOverrides = {}) {
   });
 }
 
+function runStoreStatus(home, envOverrides = {}) {
+  return spawnSync(process.execPath, [SETUP, '--extension-status'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOME: home,
+      REDLINE_TEST_MODE: '1',
+      REDLINE_EXTENSION_PRESENT: '1',
+      REDLINE_TEST_HELPER_UP: '1',
+      ...envOverrides,
+    },
+    encoding: 'utf8',
+  });
+}
+
 function runSetup(args, home, envOverrides = {}) {
   return spawnSync(process.execPath, [SETUP, ...args, '--source', ROOT], {
     cwd: ROOT,
@@ -483,6 +498,40 @@ test('extension status reports a missing synced extension', () => {
     assert.match(result.stdout, /Chrome extension status/);
     assert.match(result.stdout, /missing/);
     assert.match(result.stdout, /redline setup --with-screenshots/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('Store status diagnoses the installed extension and helper without unpacked guidance', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-store-status-'));
+  try {
+    const result = runStoreStatus(home);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Chrome Web Store extension status/);
+    assert.match(result.stdout, /installed and enabled/i);
+    assert.match(result.stdout, /helper:.*up/i);
+    assert.match(result.stdout, /popup.*pair/i);
+    assert.doesNotMatch(result.stdout, /Load unpacked|~\/\.redline\/extension|--with-screenshots/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('Store status gives Store setup guidance when the extension or helper is missing', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-store-status-missing-'));
+  try {
+    const missingExtension = runStoreStatus(home, { REDLINE_EXTENSION_PRESENT: '0' });
+    assert.equal(missingExtension.status, 1);
+    assert.match(missingExtension.stdout, /Chrome Web Store.*missing/i);
+    assert.match(missingExtension.stdout, new RegExp(STORE_ID));
+    assert.doesNotMatch(missingExtension.stdout, /Load unpacked|--with-screenshots/);
+
+    const missingHelper = runStoreStatus(home, { REDLINE_TEST_HELPER_UP: '0' });
+    assert.equal(missingHelper.status, 1);
+    assert.match(missingHelper.stdout, /helper:.*down/i);
+    assert.match(missingHelper.stdout, /redline setup/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

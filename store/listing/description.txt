@@ -5,7 +5,7 @@ Select text on a webpage, leave a comment, and pull that feedback directly into 
 How it works
 
 1. Install the Redline extension.
-2. Run: npx --yes @archastro/redline setup
+2. Run: npx --yes --@archastro:registry=https://registry.npmjs.org --package @archastro/redline redline setup
 3. Enable Redline for the site you want to review.
 4. Select text, add a comment, and submit the redline.
 5. Ask your coding agent to "Pull my redlines" or run: redline pull

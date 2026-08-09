@@ -11,7 +11,7 @@ const root = path.join(__dirname, '..');
 const bootstrapDir = path.join(root, 'store/bootstrap');
 const distDir = path.join(root, 'dist');
 const archivePath = path.join(root, 'dist/redline-chrome-bootstrap-0.0.1.zip');
-const expectedSha256 = '460a2f49e1357f840fe4cba5318fbe284b26f0a0722204a13d23b49cd5ada98d';
+const expectedSha256 = '2524eb58d0ab4f7999104821e279dd2659848e139ac6c8db1d7150fc8944a1b0';
 
 function runBuilder() {
   return spawnSync(process.execPath, ['scripts/build-bootstrap-extension.js'], {

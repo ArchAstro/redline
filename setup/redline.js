@@ -26,30 +26,27 @@ function printHelp() {
   process.stdout.write(`Redline
 
 Quick start:
-  redline setup      Sync local Chrome extension files
-  redline setup --with-screenshots
-                     Enable full visual redlines on normal websites
-  redline start      Start the local sidecar
-  redline status     Check extension files, Chrome reload state, and sidecar
+  redline setup      Start the local helper and pair the Chrome extension
+  redline status     Check extension presence and helper health
+  redline start      Start the local helper
   redline pull       Print pending redlines for your agent
 
 Common commands:
-  setup [flags]      Configure the extension. Example: redline setup --dry-run
-                     Use --with-screenshots for screenshots and all http/https pages
-                     Use --local-only to switch back to low-permission local pages
-  status             Run Chrome extension and sidecar diagnostics
-  start              Start the sidecar in the background
-  stop               Stop the sidecar
-  restart            Restart the sidecar
-  logs [-f]          Show sidecar logs
+  setup [flags]      Configure or pair the Chrome extension
+  status             Check Chrome extension presence and helper health
+  start              Start the helper in the background
+  stop               Stop the helper
+  restart            Restart the helper
+  logs [-f]          Show helper logs
   pull [filters]     Fetch pending redlines
   watch              Poll for new pending redlines
   tail               Dump local redline store for debugging
   clear              Wipe the local redline store
 
 Chrome extension:
-  Open chrome://extensions, enable Developer mode, click Load unpacked,
-  and choose ~/.redline/extension after running "redline setup".
+  Install Redline from the Chrome Web Store, then run "redline setup".
+  Setup opens a short-lived local consent page to pair the extension.
+  Contributors can use the isolated unpacked workflow in CONTRIBUTING.md.
 
 More help:
   redline setup --help

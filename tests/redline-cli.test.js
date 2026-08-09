@@ -27,9 +27,12 @@ test('redline with no arguments prints a quickstart', () => {
     assert.equal(result.status, 0);
     assert.match(result.stdout, /Redline/);
     assert.match(result.stdout, /redline setup/);
-    assert.match(result.stdout, /redline setup --with-screenshots/);
+    assert.match(result.stdout, /Chrome Web Store/);
+    assert.match(result.stdout, /pair/i);
     assert.match(result.stdout, /redline status/);
     assert.match(result.stdout, /redline start/);
+    assert.doesNotMatch(result.stdout, /Sync local Chrome extension files/);
+    assert.doesNotMatch(result.stdout, /Open chrome:\/\/extensions[^]*Load unpacked/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
