@@ -22,6 +22,7 @@ test('release version command synchronizes every public manifest', () => {
     for (const relativePath of [
       'package.json',
       'extension/manifest.json',
+      'extension/manifest.dev.json',
     ]) {
       const destination = path.join(temp, relativePath);
       fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -34,6 +35,7 @@ test('release version command synchronizes every public manifest', () => {
     const result = spawnSync(process.execPath, [SYNC, '--root', temp], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(readJson(temp, 'extension/manifest.json').version, '9.8.7');
+    assert.equal(readJson(temp, 'extension/manifest.dev.json').version, '9.8.7');
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

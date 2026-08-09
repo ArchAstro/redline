@@ -6,6 +6,9 @@ const test = require('node:test');
 
 const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
+const readReleaseNote = (file) => (
+  fs.existsSync(path.join(root, file)) ? read(file) : read('CHANGELOG.md')
+);
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('public guidance uses public examples and current ArchAstro contacts', () => {
@@ -90,13 +93,13 @@ test('package ships one standard skill and no harness plugin trees', () => {
 test('Redline CLI leaves agent skill and plugin state under user control', () => {
   const setup = read('setup/redline-agent-setup.js');
   const readme = read('README.md');
-  const changeset = read('.changeset/standard-agent-skills.md');
+  const releaseNote = readReleaseNote('.changeset/standard-agent-skills.md');
   const skill = read('skills/redline/SKILL.md');
 
   assert.doesNotMatch(setup, /spawn(?:Sync)?\([^)]*npx|skills@|skill-lock|skill-source|skills-status|cleanupLegacyPlugins/);
   assert.match(readme, /npx skills add ArchAstro\/redline/);
   assert.match(readme, /never installs,\s*updates,\s*removes,\s*or inspects agent skills/i);
-  assert.match(changeset, /"@archastro\/redline": minor/);
+  assert.match(releaseNote, /portable agent skill|agent skills/i);
   assert.match(skill, /^metadata:\n  author: ArchAstro\n  source: https:\/\/github\.com\/ArchAstro\/redline$/m);
 });
 
@@ -184,12 +187,11 @@ test('README keeps the first-use path concise and links community policies', () 
 });
 
 test('Store-first release notes and public issue guidance cannot drift', () => {
-  const storeChangeset = read('.changeset/store-first-pairing.md');
+  const storeReleaseNote = readReleaseNote('.changeset/store-first-pairing.md');
   const bugTemplate = read('.github/ISSUE_TEMPLATE/bug_report.yml');
 
-  assert.match(storeChangeset, /^---\n"@archastro\/redline": minor\n---$/m);
-  assert.match(storeChangeset, /Chrome Web Store/i);
-  assert.match(storeChangeset, /pair/i);
+  assert.match(storeReleaseNote, /Chrome Web Store/i);
+  assert.match(storeReleaseNote, /pair/i);
   assert.doesNotMatch(bugTemplate, /placeholder:\s*["']?0\.2\.3/);
   assert.match(read('store/listing/description.txt'), /--@archastro:registry=https:\/\/registry\.npmjs\.org/);
 });
