@@ -411,7 +411,18 @@ const server = http.createServer(async (req, res) => {
       if (auth.kind !== 'browser') {
         return errorResponse(req, res, 403, 'forbidden_origin', 'browser clear requires a paired Redline profile');
       }
-      const clearGeneration = await stateStore.clearAll({ browserToken: auth.token });
+      if (!validJsonContentType(req)) {
+        return errorResponse(req, res, 415, 'unsupported_media_type', 'browser clear requires application/json');
+      }
+      const body = await readJsonObject(req, 1);
+      if (typeof body.operation_id !== 'string' ||
+          Object.keys(body).sort().join(',') !== 'operation_id') {
+        return errorResponse(req, res, 400, 'invalid_request', 'browser clear request is invalid');
+      }
+      const clearGeneration = await stateStore.clearAll({
+        browserToken: auth.token,
+        operationId: body.operation_id,
+      });
       return send(req, res, 200, { clear_generation: clearGeneration }, { 'cache-control': 'no-store' });
     }
 

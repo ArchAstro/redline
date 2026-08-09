@@ -30,7 +30,7 @@ function tempStore(t, options = {}) {
 
 async function pairedClient(store) {
   const pairing = await store.createPairingWindow();
-  return store.consumePairingSecret(pairing.secret);
+  return store.consumePairingSecret(pairing.secret, { consentVersion: 1 });
 }
 
 function submission(overrides = {}) {
@@ -307,7 +307,10 @@ test('browser authorization is revalidated inside each queued operation', async 
   const client = await pairedClient(store);
   const created = await store.submitRedline(client.clientId, submission());
 
-  const clear = store.clearAll({ browserToken: client.token });
+  const clear = store.clearAll({
+    browserToken: client.token,
+    operationId: 'op_auth_revalidation_clear',
+  });
   const read = store.listRedlines({}, { browserToken: client.token }).catch((error) => error.code);
   const update = store.updateRedline(created.id, { comment: 'stale update' },
     { browserToken: client.token }).catch((error) => error.code);
@@ -321,7 +324,10 @@ test('browser authorization is revalidated inside each queued operation', async 
 test('revoked browser authorization is checked before malformed operation identifiers', async (t) => {
   const { store } = tempStore(t);
   const client = await pairedClient(store);
-  await store.clearAll({ browserToken: client.token });
+  await store.clearAll({
+    browserToken: client.token,
+    operationId: 'op_revoked_auth_clear',
+  });
 
   for (const operation of [
     () => store.readScreenshot('../invalid', { browserToken: client.token }),

@@ -10,7 +10,8 @@ const path = require('node:path');
 const test = require('node:test');
 
 const ROOT = path.resolve(__dirname, '..');
-const STORE_ID = 'hfjngaflcmkocibdgpeanmhjlkofibca';
+const STORE_IDENTITY = require('../config/extension-identity.json');
+const STORE_ID = STORE_IDENTITY.extension_id;
 const INSTANCE_ID = 'rli_0123456789abcdef0123456789abcdef';
 const LAUNCH_ID = 'rll_fedcba9876543210fedcba9876543210';
 
@@ -27,10 +28,10 @@ test('installed tarball resolves a fixture Store identity when config is supplie
     fs.cpSync(path.join(ROOT, entry), path.join(staging, entry), { recursive: true });
   }
   fs.mkdirSync(path.join(staging, 'config'));
-  fs.writeFileSync(path.join(staging, 'config', 'extension-identity.json'), JSON.stringify({
-    extension_id: STORE_ID,
-    web_store_url: `https://chromewebstore.google.com/detail/redline/${STORE_ID}`,
-  }));
+  fs.writeFileSync(
+    path.join(staging, 'config', 'extension-identity.json'),
+    `${JSON.stringify(STORE_IDENTITY, null, 2)}\n`,
+  );
   const packed = spawnSync('npm', ['pack', '--json', '--ignore-scripts'], { cwd: staging, encoding: 'utf8' });
   assert.equal(packed.status, 0, packed.stderr);
   const tarball = path.join(staging, JSON.parse(packed.stdout)[0].filename);

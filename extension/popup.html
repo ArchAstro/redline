@@ -1,60 +1,63 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <style>
-      :root { color-scheme: light; }
-      body {
-        font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-        width: 380px;
-        margin: 0;
-        padding: 12px;
-        background: #fff;
-        color: #111;
-      }
-      h2 { margin: 0 0 8px; font-size: 14px; }
-      .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
-      .origin { font-size: 11px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .counts { font-size: 11px; color: #666; margin-bottom: 8px; }
-      .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; }
-      .ok { background: #d4edda; color: #155724; }
-      .bad { background: #f8d7da; color: #721c24; }
-      .btn { background: #1a1a1a; color: #fff; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
-      .btn.secondary { background: #eee; color: #111; }
-      .seg { display: flex; gap: 4px; margin-bottom: 8px; }
-      .seg button { flex: 1; }
-      .seg .active { background: #1a1a1a; color: #fff; }
-      .item { border-top: 1px solid #eee; padding: 8px 0; }
-      .sel { background: #fff176; padding: 1px 4px; border-radius: 2px; font-size: 12px; }
-      .cm { color: #333; font-size: 12px; margin-top: 4px; white-space: pre-wrap; }
-      .meta { font-size: 11px; color: #888; margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-      .meta a { color: #1a73e8; text-decoration: none; }
-      .empty { color: #888; padding: 14px 0; text-align: center; }
-      .help { border-top: 1px solid #eee; margin-top: 8px; padding-top: 8px; color: #666; font-size: 11px; }
-      .path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #333; }
-      .status-acked { color: #888; }
-    </style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Redline</title>
+    <link rel="stylesheet" href="popup.css">
   </head>
   <body>
-    <div class="row">
-      <h2>Redline</h2>
-      <span id="status" class="badge bad">checking…</span>
-    </div>
-    <div class="row">
-      <span id="origin" class="origin"></span>
-      <button id="refreshShot" class="btn secondary" title="Re-snap the page screenshot on next submit">Refresh shot</button>
-    </div>
-    <div id="counts" class="counts"></div>
-    <div class="seg" aria-label="Redline filter">
-      <button class="btn secondary active" data-filter="pending">Pending</button>
-      <button class="btn secondary" data-filter="all">All</button>
-    </div>
-    <div id="list"></div>
-    <div class="help">
-      <div>After updating Redline, reload it in <button id="openExtensions" class="btn secondary">chrome://extensions</button></div>
-      <div>Extension path: <span class="path">~/.redline/extension</span></div>
-    </div>
-    <script src="auth.js"></script>
+    <header class="masthead">
+      <div class="brand"><span class="mark" aria-hidden="true">R</span><strong>Redline</strong></div>
+      <span id="connection-status" class="connection" role="status">Checking</span>
+    </header>
+
+    <main>
+      <section class="site-panel" aria-labelledby="site-title">
+        <div class="section-label" id="site-title">Current site</div>
+        <div id="origin" class="origin">No website open</div>
+        <p id="site-message" class="message" role="status"></p>
+        <div class="site-actions">
+          <button id="enable-site" class="primary">Enable Redline on this site</button>
+          <button id="disable-site" class="secondary" hidden>Disable on this site</button>
+        </div>
+      </section>
+
+      <section class="visual-panel" aria-labelledby="visual-title">
+        <div class="toggle-row">
+          <div>
+            <div class="section-label" id="visual-title">Full visual context</div>
+            <p>Attach a visible-tab screenshot to new feedback. This asks Chrome for access to all websites; Redline captures only an enabled site's active tab when you submit. After turning it off, you may need to enable sites again.</p>
+          </div>
+          <label class="switch" aria-label="Full visual context">
+            <input id="full-visual" type="checkbox">
+            <span aria-hidden="true"></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="feedback-panel" aria-labelledby="feedback-title">
+        <div class="feedback-head">
+          <div>
+            <div class="section-label" id="feedback-title">Feedback</div>
+            <div id="counts" class="counts"></div>
+          </div>
+          <button id="refreshShot" class="quiet" title="Use a fresh screenshot on the next submission">Refresh shot</button>
+        </div>
+        <div class="filters" aria-label="Feedback filter">
+          <button data-filter="pending" class="active">Pending</button>
+          <button data-filter="all">All</button>
+        </div>
+        <div id="list" class="list"></div>
+      </section>
+    </main>
+
+    <footer>
+      <button id="disconnect" class="quiet">Disconnect browser</button>
+      <button id="disable-everywhere" class="quiet">Disable everywhere</button>
+      <button id="clear-data" class="danger">Clear all data</button>
+    </footer>
+
     <script src="popup.js"></script>
   </body>
 </html>

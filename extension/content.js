@@ -1,8 +1,12 @@
 (() => {
-  if (window.__rlInjected) return;
+  if (window.__rlInjected) {
+    window.__rlEnable?.();
+    return;
+  }
   window.__rlInjected = true;
 
   const RECONCILE_INTERVAL_MS = 2000;
+  const MARKER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
   const STATE = {
     pendingSelection: null,
@@ -10,30 +14,20 @@
     popover: null,
     highlights: new Map(),
     staleTimer: null,
+    reconcileTimer: null,
+    observer: null,
+    disabled: false,
   };
 
-  function storageLocal() {
-    return globalThis.chrome?.storage?.local || null;
-  }
-
   async function getLocal(keys) {
-    const area = storageLocal();
-    if (!area) return {};
-    try {
-      return await area.get(keys);
-    } catch {
-      return {};
-    }
+    const response = await chrome.runtime.sendMessage({ type: 'marker-storage-get', keys });
+    if (!response?.ok) throw new Error(response?.error || 'marker storage read failed');
+    return response.values;
   }
 
   async function setLocal(value) {
-    const area = storageLocal();
-    if (!area) return;
-    try {
-      await area.set(value);
-    } catch {
-      // Storage is only used for local marker persistence and convenience defaults.
-    }
+    const response = await chrome.runtime.sendMessage({ type: 'marker-storage-set', values: value });
+    if (!response?.ok) throw new Error(response?.error || 'marker storage write failed');
   }
 
   function submissionErrorMessage(error) {
@@ -146,7 +140,11 @@
       try {
         await submit({ range, existing, comment: ta.value, project: proj.value.trim() });
         status.textContent = 'sent';
-        setLocal({ rl_last_project: proj.value.trim() || null });
+        try {
+          await setLocal({ rl_last_project: proj.value.trim() || null });
+        } catch (error) {
+          console.warn('[redline] project preference persistence failed:', error.message);
+        }
         setTimeout(closePopover, 400);
       } catch (e) {
         status.textContent = 'error: ' + submissionErrorMessage(e);
@@ -256,7 +254,11 @@
       : await chrome.runtime.sendMessage({ type: 'submit-redline', payload });
     if (!resp?.ok) throw new Error(resp?.error || 'submit failed');
     addHighlight(resp.item, range, ser);
-    await upsertLocal(resp.item, ser);
+    try {
+      await upsertLocal(resp.item, ser);
+    } catch (error) {
+      console.warn('[redline] marker persistence failed:', error.message);
+    }
   }
 
   function localKey() {
@@ -265,14 +267,26 @@
 
   async function upsertLocal(item, ser) {
     const key = localKey();
-    const data = (await getLocal([key]))[key] || [];
+    const data = ((await getLocal([key]))[key] || []).filter(markerNotExpired);
     const idx = data.findIndex((x) => x.item.id === item.id);
+    const marker = {
+      item,
+      ser,
+      expires_at: new Date(Date.now() + MARKER_TTL_MS).toISOString(),
+    };
     if (idx >= 0) {
-      data[idx] = { item, ser };
+      data[idx] = marker;
     } else {
-      data.push({ item, ser });
+      data.push(marker);
     }
     await setLocal({ [key]: data });
+  }
+
+  function markerNotExpired({ expires_at } = {}) {
+    const expiry = typeof expires_at === 'string' ? Date.parse(expires_at) : NaN;
+    return Number.isFinite(expiry) &&
+      new Date(expiry).toISOString() === expires_at &&
+      Date.parse(expires_at) > Date.now();
   }
 
   function pageKeyForUrl(url) {
@@ -317,6 +331,7 @@
   }
 
   async function reconcileHighlights() {
+    if (STATE.disabled) return;
     const key = localKey();
     const data = (await getLocal([key]))[key] || [];
     if (!data.length) {
@@ -331,12 +346,13 @@
     }
     const kept = [];
     const visible = new Set();
-    for (const { item, ser } of data) {
+    for (const { item, ser, expires_at } of data) {
       const existing = STATE.highlights.get(item.id);
       const range = existing?.range || deserializeRange(ser);
-      if (range && textStillMatches(item, ser, range) && (!pendingIds || pendingIds.has(item.id))) {
+      if (markerNotExpired({ expires_at }) && range && textStillMatches(item, ser, range) &&
+          (!pendingIds || pendingIds.has(item.id))) {
         addHighlight(item, range, ser);
-        kept.push({ item, ser });
+        kept.push({ item, ser, expires_at });
         visible.add(item.id);
       } else {
         removeHighlight(item.id);
@@ -366,6 +382,7 @@
   }
 
   function scheduleStalePrune() {
+    if (STATE.disabled) return;
     if (STATE.staleTimer) clearTimeout(STATE.staleTimer);
     STATE.staleTimer = setTimeout(() => {
       STATE.staleTimer = null;
@@ -375,6 +392,7 @@
 
   document.addEventListener('mouseup', () => {
     setTimeout(() => {
+      if (STATE.disabled) return;
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || !sel.toString().trim()) {
         hideButton();
@@ -388,12 +406,14 @@
   });
 
   document.addEventListener('mousedown', (e) => {
+    if (STATE.disabled) return;
     if (STATE.button && STATE.button.contains(e.target)) return;
     if (STATE.popover && STATE.popover.contains(e.target)) return;
     hideButton();
   });
 
   document.addEventListener('click', (e) => {
+    if (STATE.disabled) return;
     if (STATE.popover && STATE.popover.contains(e.target)) return;
     if (STATE.button && STATE.button.contains(e.target)) return;
     for (const [, h] of STATE.highlights) {
@@ -412,17 +432,56 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') reconcileHighlights();
   });
-  setInterval(() => {
-    if (document.visibilityState !== 'hidden') reconcileHighlights();
-  }, RECONCILE_INTERVAL_MS);
-
-  if (typeof MutationObserver !== 'undefined') {
-    new MutationObserver(scheduleStalePrune).observe(document.documentElement, {
-      childList: true,
-      characterData: true,
-      subtree: true,
-    });
+  function startReconciliation() {
+    if (STATE.reconcileTimer === null) {
+      STATE.reconcileTimer = setInterval(() => {
+        if (document.visibilityState !== 'hidden') reconcileHighlights();
+      }, RECONCILE_INTERVAL_MS);
+    }
+    if (typeof MutationObserver !== 'undefined' && STATE.observer === null) {
+      STATE.observer = new MutationObserver(scheduleStalePrune);
+      STATE.observer.observe(document.documentElement, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    }
   }
 
+  function enableRedline() {
+    if (!STATE.disabled) return;
+    STATE.disabled = false;
+    startReconciliation();
+    loadLocal();
+  }
+
+  function disableRedline() {
+    if (STATE.disabled) return;
+    STATE.disabled = true;
+    STATE.pendingSelection = null;
+    STATE.button?.remove();
+    STATE.popover?.remove();
+    STATE.button = null;
+    STATE.popover = null;
+    STATE.highlights.clear();
+    CSS.highlights?.delete('rl-redline');
+    if (STATE.staleTimer) clearTimeout(STATE.staleTimer);
+    STATE.staleTimer = null;
+    if (STATE.reconcileTimer) clearInterval(STATE.reconcileTimer);
+    STATE.reconcileTimer = null;
+    STATE.observer?.disconnect();
+    STATE.observer = null;
+  }
+
+  window.__rlEnable = enableRedline;
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message && message.type === 'redline-disable-site' &&
+        (!Array.isArray(message.origins) || message.origins.includes(location.origin))) {
+      disableRedline();
+    }
+  });
+
+  startReconciliation();
   loadLocal();
 })();

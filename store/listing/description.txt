@@ -1,0 +1,28 @@
+Redline turns precise webpage feedback into actionable input for coding agents.
+
+Select text on a webpage, leave a comment, and pull that feedback directly into Codex, Claude Code, or another coding agent that supports open agent skills. Redline preserves the page context your agent needs without making you translate visual feedback into a separate issue or prompt.
+
+How it works
+
+1. Install the Redline extension.
+2. Run: npx --yes @archastro/redline setup
+3. Enable Redline for the site you want to review.
+4. Select text, add a comment, and submit the redline.
+5. Ask your coding agent to "Pull my redlines" or run: redline pull
+
+Useful for
+
+- Reviewing local development sites and staging environments
+- Sending copy and UI feedback to coding agents
+- Attaching optional visible-page screenshots for visual context
+- Keeping pending and completed feedback visible in the browser
+- Removing resolved highlights automatically after an agent pulls them
+
+Local-first by design
+
+Redline runs through a helper on your own machine. It does not require an ArchAstro account or hosted dashboard, and ArchAstro does not receive your webpage content. Selected text, comments, page metadata, optional screenshots, and browser markers remain local unless you explicitly give the resulting redline to your coding agent or model provider.
+
+Redline is open source under the Apache-2.0 license.
+
+Source and documentation: https://github.com/ArchAstro/redline
+Privacy policy: https://oss.archastro.ai/redline/privacy

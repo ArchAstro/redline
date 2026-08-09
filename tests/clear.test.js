@@ -37,8 +37,8 @@ test('clear atomically removes browser data, advances generation, and preserves 
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new StateStore(dir);
   const cli = await store.ensureCliCredential();
-  const first = await store.consumePairingSecret((await store.createPairingWindow()).secret);
-  const second = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const first = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
+  const second = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
   const draft = {
     operation_id: 'op_clear_01234567', clear_generation: 0,
     selected_text: 'old', comment: 'remove', screenshot_png: png('clear'),
@@ -57,11 +57,33 @@ test('clear atomically removes browser data, advances generation, and preserves 
   const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8'));
   assert.deepEqual(state.operations, {});
 
-  const repaired = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const repaired = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
   await assert.rejects(
     store.submitRedline(repaired.clientId, draft),
     (error) => error.code === 'data_cleared' && !error.message.includes('old'),
   );
+});
+
+test('browser clear replays a durable receipt after its token is revoked', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-clear-receipt-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const store = new StateStore(dir);
+  const browser = await store.consumePairingSecret(
+    (await store.createPairingWindow()).secret,
+    { consentVersion: 1 },
+  );
+  const operationId = 'op_clear_receipt_01234567';
+
+  assert.equal(await store.clearAll({ browserToken: browser.token, operationId }), 1);
+  assert.equal(await store.clearAll({ browserToken: browser.token, operationId }), 1);
+  await assert.rejects(
+    store.clearAll({ browserToken: 'x'.repeat(43), operationId }),
+    (error) => error.code === 'unauthorized',
+  );
+
+  const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8'));
+  assert.equal(JSON.stringify(state).includes(browser.token), false);
+  assert.equal(state.clear_receipts[operationId].clear_generation, 1);
 });
 
 test('redline-clear uses the private CLI credential and admin clear endpoint', async (t) => {
@@ -119,7 +141,7 @@ test('clear crash recovery rolls back precommit and completes every postcommit d
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
     const base = new StateStore(dir);
     const cli = await base.ensureCliCredential();
-    const client = await base.consumePairingSecret((await base.createPairingWindow()).secret);
+    const client = await base.consumePairingSecret((await base.createPairingWindow()).secret, { consentVersion: 1 });
     await base.submitRedline(client.clientId, {
       operation_id: 'op_crash_clear_01', clear_generation: 0, comment: 'preserve or clear',
     });
@@ -176,7 +198,7 @@ test('SIGKILL during committed clear leaves a stale lock and recovery finishes e
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
     const store = new StateStore(dir);
     const cli = await store.ensureCliCredential();
-    const client = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+    const client = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
     await store.submitRedline(client.clientId, {
       operation_id: 'op_before_killed_clear', clear_generation: 0, comment: 'must be cleared',
     });
@@ -237,7 +259,7 @@ test('clear serializes against pair, create, and delete without allowing an old 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-clear-race-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new StateStore(dir);
-  const oldClient = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const oldClient = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
   const old = await store.submitRedline(oldClient.clientId, {
     operation_id: 'op_before_clear_01', clear_generation: 0, comment: 'old',
   });
@@ -264,7 +286,7 @@ test('cross-process clear racing a submission converges on an empty next generat
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-clear-process-race-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new StateStore(dir);
-  const client = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const client = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
   const modulePath = path.resolve(__dirname, '../runtime/lib/state-store.js');
   const run = (code, args = []) => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['-e', code, dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });

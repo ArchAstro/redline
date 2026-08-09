@@ -53,19 +53,27 @@ test('replacement, expiry, replay, and racing pairing attempts allow exactly one
   const { store } = tempStore(t, { now: () => now });
   const first = await store.createPairingWindow();
   const second = await store.createPairingWindow();
-  assert.equal(await store.consumePairingSecret(first.secret), null);
+  assert.equal(await store.consumePairingSecret(first.secret, { consentVersion: 1 }), null);
 
   const results = await Promise.all([
-    store.consumePairingSecret(second.secret),
-    store.consumePairingSecret(second.secret),
+    store.consumePairingSecret(second.secret, { consentVersion: 1 }),
+    store.consumePairingSecret(second.secret, { consentVersion: 1 }),
   ]);
   assert.equal(results.filter(Boolean).length, 1);
-  assert.equal(await store.consumePairingSecret(second.secret), null);
+  assert.equal(await store.consumePairingSecret(second.secret, { consentVersion: 1 }), null);
 
   const expired = await store.createPairingWindow();
   now += 10 * 60 * 1000 + 1;
-  assert.equal(await store.consumePairingSecret(expired.secret), null);
+  assert.equal(await store.consumePairingSecret(expired.secret, { consentVersion: 1 }), null);
   assert.deepEqual(await store.pairingStatus(), { available: false });
+});
+
+test('pairing consumption fails closed when the caller omits explicit consent', async (t) => {
+  const { store } = tempStore(t);
+  const pairing = await store.createPairingWindow();
+
+  assert.equal(await store.consumePairingSecret(pairing.secret), null);
+  assert.ok(await store.consumePairingSecret(pairing.secret, { consentVersion: 1 }));
 });
 
 test('pairing consumption is serialized across setup and sidecar processes', async (t) => {
@@ -78,7 +86,7 @@ test('pairing consumption is serialized across setup and sidecar processes', asy
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', chunk => { secret += chunk; });
     process.stdin.on('end', async () => {
-      const result = await new StateStore(process.argv[1]).consumePairingSecret(secret);
+      const result = await new StateStore(process.argv[1]).consumePairingSecret(secret, { consentVersion: 1 });
       process.stdout.write(result ? 'paired' : 'rejected');
     });
   `;
@@ -100,9 +108,9 @@ test('pairing consumption is serialized across setup and sidecar processes', asy
 test('each pair mints a distinct stable client and hashed capability token', async (t) => {
   const { root, store } = tempStore(t);
   const one = await store.createPairingWindow();
-  const clientOne = await store.consumePairingSecret(one.secret);
+  const clientOne = await store.consumePairingSecret(one.secret, { consentVersion: 1 });
   const two = await store.createPairingWindow();
-  const clientTwo = await store.consumePairingSecret(two.secret);
+  const clientTwo = await store.consumePairingSecret(two.secret, { consentVersion: 1 });
 
   assert.notEqual(clientOne.clientId, clientTwo.clientId);
   assert.notEqual(clientOne.token, clientTwo.token);
@@ -115,7 +123,7 @@ test('each pair mints a distinct stable client and hashed capability token', asy
 
 test('pre-consent browser credentials remain readable for migration but are never authorized', async (t) => {
   const { root, store } = tempStore(t);
-  const paired = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const paired = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
   const statePath = path.join(root, 'state.json');
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   delete state.clients[paired.clientId].consent_version;
@@ -127,8 +135,8 @@ test('pre-consent browser credentials remain readable for migration but are neve
 
 test('supports per-client and all-browser revocation with monotonic clear generation', async (t) => {
   const { store } = tempStore(t);
-  const first = await store.consumePairingSecret((await store.createPairingWindow()).secret);
-  const second = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const first = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
+  const second = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
 
   assert.equal(await store.revokeClient(first.clientId), true);
   assert.equal(await store.verifyClientToken(first.token), null);
@@ -143,7 +151,7 @@ test('supports per-client and all-browser revocation with monotonic clear genera
 test('verifies a distinct persistent CLI credential using timing-safe hashes', async (t) => {
   const { store } = tempStore(t);
   const cli = await store.ensureCliCredential();
-  const paired = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const paired = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
 
   assert.notEqual(cli, paired.token);
   assert.equal(await store.verifyCliToken(cli), true);

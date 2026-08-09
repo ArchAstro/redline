@@ -3,6 +3,9 @@
   "name": "Redline",
   "version": "0.2.6",
   "description": "Turn precise webpage feedback into actionable coding-agent input.",
+  "icons": {
+    "128": "icon-128.png"
+  },
   "minimum_chrome_version": "111",
   "permissions": [
     "storage",
@@ -14,8 +17,7 @@
     "http://127.0.0.1:7878/*"
   ],
   "optional_host_permissions": [
-    "http://*/*",
-    "https://*/*"
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"
@@ -33,6 +35,9 @@
     }
   ],
   "action": {
+    "default_icon": {
+      "128": "icon-128.png"
+    },
     "default_popup": "popup.html",
     "default_title": "Redline"
   }

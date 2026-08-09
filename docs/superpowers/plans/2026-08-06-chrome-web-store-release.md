@@ -368,7 +368,7 @@ Cover serialized concurrent creates, `(client_id, operation_id)` uniqueness, can
 
 - [ ] **Step 2: Write failing clear tests**
 
-Verify clear removes content/screenshots/tombstones/pairing state, revokes browser clients, advances generation, preserves the CLI administrative credential, and rejects a retained draft after re-pairing from another profile. Add races for clear versus pair/create/delete. A durable clear intent records the target generation and exact screenshot/staging deletion set before metadata changes; add crash injection before intent write, after intent fsync, after `state.json` replacement, during each deletion, and before intent removal.
+Verify clear removes content/screenshots/tombstones/pairing state, revokes browser clients, advances generation, preserves the CLI administrative credential, and rejects a retained draft after re-pairing from another profile. Give each browser clear a random operation ID and retain a token-bound, content-free receipt for 30 days so a retry can prove success after the clear revokes its token. Add races for clear versus pair/create/delete. A durable clear intent records the target generation and exact screenshot/staging deletion set before metadata changes; add crash injection before intent write, after intent fsync, after `state.json` replacement, during each deletion, and before intent removal.
 
 - [ ] **Step 3: Verify failure**
 
@@ -468,7 +468,7 @@ Expected: PASS, including proof that no draft/content collection occurs before c
 
 - [ ] **Step 1: Write failing permission tests**
 
-Cover explicit-port origin patterns, one-site grant, persistent dynamic registration, restart reconciliation, denied/revoked permission, disable-site, disable-everywhere, restricted URL messaging, full visual warning/grant, no all-sites content registration, broad-grant revocation, and preservation of per-site registrations.
+Cover explicit-port origin patterns, one-site grant, persistent dynamic registration, restart reconciliation, denied/revoked permission, disable-site, disable-everywhere, restricted URL messaging, full visual warning/grant, no all-sites content registration, broad-grant revocation, and reconciliation using Chrome permission-containment semantics.
 
 - [ ] **Step 2: Verify failure**
 

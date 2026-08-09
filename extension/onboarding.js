@@ -200,6 +200,7 @@
             return { status: terminalStatus };
           }
           if (result.status === 'paired') {
+            stateEpoch += 1;
             connected = true;
             stopPolling();
             clearExpiryTimer();
@@ -248,7 +249,6 @@
     const connect = document.getElementById('connect');
     const decline = document.getElementById('decline');
     const copy = document.getElementById('copy-command');
-    const enableSite = document.getElementById('enable-site');
 
     const view = {
       showSetup() {
@@ -279,7 +279,7 @@
         declinedStep.hidden = true;
         siteStep.hidden = false;
         status.textContent = 'This browser is connected to the local Redline helper.';
-        enableSite.focus();
+        siteStep.querySelector('h2')?.focus?.();
       },
       showDeclined(guidance) {
         disclosure.hidden = true;
@@ -310,6 +310,7 @@
     const connectionClient = connectionApi.createConnectionClient({
       fetch: fetch.bind(window),
       storage: chrome.storage.local,
+      cleanupStorage: chrome.storage.local,
     });
     const controller = createOnboardingController({
       connectionClient,
@@ -335,12 +336,6 @@
     copy.addEventListener('click', async () => {
       await navigator.clipboard.writeText(SETUP_COMMAND);
       status.textContent = 'Setup command copied.';
-    });
-    enableSite.addEventListener('click', async () => {
-      const result = await controller.enableSite();
-      if (result.status === 'site_enable_unavailable') {
-        status.textContent = 'Open the target page and use the Redline extension to enable that site.';
-      }
     });
     window.addEventListener('beforeunload', () => controller.dispose(), { once: true });
     return controller.init().then(() => controller);

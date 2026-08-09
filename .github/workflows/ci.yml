@@ -26,6 +26,7 @@ jobs:
       - run: npm test
       - run: npm run check:syntax
       - run: npm run check:versions
+      - run: npm run check:chrome-store
       - run: npm pack --dry-run
       - name: Check whitespace
         run: |

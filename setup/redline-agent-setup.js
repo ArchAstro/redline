@@ -318,8 +318,9 @@ function extensionModeLabel(mode) {
   return mode === 'full' ? 'full-access' : 'local-only';
 }
 
-function patchExtensionManifestForMode(raw, mode) {
+function patchExtensionManifestForMode(raw, mode, publicKey) {
   const manifest = JSON.parse(raw);
+  if (publicKey) manifest.key = publicKey;
   if (mode !== 'full') return JSON.stringify(manifest, null, 2) + '\n';
 
   const hostPermissions = Array.isArray(manifest.host_permissions) ? manifest.host_permissions : [];
@@ -347,10 +348,11 @@ async function syncExtension(sourceRoot, dryRun, mode) {
   const extDst = path.join(redlineRoot(), 'extension');
   if (!(await exists(extSrc))) throw new Error(`Chrome extension source missing at ${extSrc}`);
   const devManifest = await fsp.readFile(path.join(extSrc, 'manifest.dev.json'), 'utf8');
+  const { publicKey } = loadStoreIdentity(sourceRoot);
   const authToken = await ensureAuthToken(dryRun);
   const port = redlinePort();
   const filesChanged = await copyTree(extSrc, extDst, dryRun, {
-    'manifest.json': () => patchExtensionManifestForMode(devManifest, mode),
+    'manifest.json': () => patchExtensionManifestForMode(devManifest, mode, publicKey),
     'auth.js': (raw) => patchExtensionAuth(raw, authToken, port),
     'background.js': patchExtensionBackground,
   }, { 'auth.js': 0o600 }, new Set(['manifest.dev.json']));
@@ -430,7 +432,7 @@ async function runStorePairingFlow({
   const installed = extensionPresent === undefined ? discoverExtension() : extensionPresent;
   const pairing = await createPairingWindow();
   try {
-    await openUrl(`http://127.0.0.1:7878/connect#pair=${pairing.secret}`);
+    await openUrl(`http://127.0.0.1:7878/connect#pair=${pairing.secret}&expires_at=${encodeURIComponent(pairing.expiresAt)}`);
   } catch {
     const failure = new Error('Could not open the Redline connection page. Run redline setup again.');
     try {
@@ -533,9 +535,10 @@ async function extensionStatus(sourceRoot) {
       const port = redlinePort();
       const extSrc = path.join(sourceRoot, 'extension');
       const devManifest = await fsp.readFile(path.join(extSrc, 'manifest.dev.json'), 'utf8');
+      const { publicKey } = loadStoreIdentity(sourceRoot);
       const filesOutOfSync = !authToken || (await exists(extSrc)
           ? await copyTree(extSrc, extDst, true, {
-            'manifest.json': () => patchExtensionManifestForMode(devManifest, mode),
+            'manifest.json': () => patchExtensionManifestForMode(devManifest, mode, publicKey),
             'auth.js': (raw) => patchExtensionAuth(raw, authToken, port),
             'background.js': patchExtensionBackground,
           }, { 'auth.js': 0o600 }, new Set(['manifest.dev.json']))
@@ -684,4 +687,10 @@ if (require.main === module) {
   main().catch((error) => fail(error.message));
 }
 
-module.exports = { loadStoreIdentity, requestPairingInvalidation, requestPairingWindow, runStorePairingFlow };
+module.exports = {
+  loadStoreIdentity,
+  patchExtensionManifestForMode,
+  requestPairingInvalidation,
+  requestPairingWindow,
+  runStorePairingFlow,
+};

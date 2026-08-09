@@ -6,18 +6,26 @@
   const REQUIRED_CAPABILITIES = ['pairing-v1', 'idempotent-redlines-v1'];
   const RESPONSE_LIMIT_BYTES = 64 * 1024;
   const REQUEST_TIMEOUT_MS = 3000;
+  const Revocations = root.RedlineRevocations ||
+    (typeof module === 'object' && module?.exports ? require('./revocations') : null);
   const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 
   class InvalidHelperResponse extends Error {}
 
-  function createConnectionClient({ fetch: fetchImpl, storage, now = Date.now }) {
+  function createConnectionClient({ fetch: fetchImpl, storage, cleanupStorage = storage, now = Date.now }) {
     if (typeof fetchImpl !== 'function') throw new TypeError('connection fetch is required');
     if (!storage || typeof storage.get !== 'function' ||
         typeof storage.set !== 'function' || typeof storage.remove !== 'function') {
       throw new TypeError('connection storage is required');
     }
+    if (!cleanupStorage || typeof cleanupStorage.get !== 'function' ||
+        typeof cleanupStorage.set !== 'function' || typeof cleanupStorage.remove !== 'function') {
+      throw new TypeError('connection cleanup storage is required');
+    }
 
     let pendingRevocation = null;
+    if (!Revocations) throw new TypeError('revocation support is required');
+    const revocations = Revocations.createRevocationStore(cleanupStorage);
 
     async function request(url, options) {
       const controller = new AbortController();
@@ -73,6 +81,12 @@
 
     async function revokeConnection(connection) {
       if (!connection || !/^[A-Za-z0-9_-]{43}$/.test(connection.token || '')) return false;
+      const revocation = {
+        client_id: /^rlc_[0-9a-f]{32}$/.test(connection.client_id || '') ? connection.client_id : null,
+        token: connection.token,
+      };
+      let durable = true;
+      try { await revocations.put(revocation); } catch { durable = false; }
       try {
         const response = await request(`${BASE_URL}/clients/current`, {
           method: 'DELETE',
@@ -80,12 +94,19 @@
           headers: { authorization: `Bearer ${connection.token}` },
         });
         if (response.status === 204 || response.status === 401) {
-          if (pendingRevocation?.token === connection.token) pendingRevocation = null;
-          return true;
+          try {
+            const stored = await storage.get('redline_connection');
+            if (stored?.redline_connection?.token === connection.token) {
+              await storage.remove('redline_connection');
+            }
+            if (durable) await revocations.remove(revocation);
+            if (pendingRevocation?.token === connection.token) pendingRevocation = null;
+            return true;
+          } catch {}
         }
       } catch {}
       pendingRevocation = connection;
-      return false;
+      return durable ? false : null;
     }
 
     const client = {
@@ -201,12 +222,29 @@
             message: 'The Redline connection window expired or was already used. Run setup again.',
           };
         }
+        const mintedConnection = response.status === 201 &&
+          typeof payload?.token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(payload.token)
+          ? { client_id: payload.client_id, token: payload.token }
+          : null;
         if (response.status !== 201 ||
             Object.keys(payload || {}).sort().join(',') !== 'clear_generation,client_id,consent_version,token' ||
             !/^rlc_[0-9a-f]{32}$/.test(payload?.client_id || '') ||
             typeof payload?.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(payload.token) ||
             !Number.isSafeInteger(payload?.clear_generation) || payload.clear_generation < 0 ||
             payload?.consent_version !== 1) {
+          const revoked = mintedConnection ? await revokeConnection(mintedConnection) : true;
+          if (revoked === null) {
+            return {
+              status: 'pairing_cleanup_persistence_failed', recoverable: false,
+              message: 'Redline could not durably save cleanup for this browser credential. Keep this page open and restart the local helper.',
+            };
+          }
+          if (!revoked) {
+            return {
+              status: 'pairing_cleanup_required', recoverable: false,
+              message: 'Redline received an invalid pairing response and is still revoking its browser credential.',
+            };
+          }
           return { status: 'pairing_failed', recoverable: true, command: SETUP_COMMAND };
         }
         const connection = {
@@ -225,7 +263,14 @@
         try {
           await storage.set({ redline_connection: connection });
         } catch {
-          if (!await revokeConnection(connection)) {
+          const revoked = await revokeConnection(connection);
+          if (revoked === null) {
+            return {
+              status: 'pairing_cleanup_persistence_failed', recoverable: false,
+              message: 'Redline could not durably save cleanup for this browser credential. Keep this page open and restart the local helper.',
+            };
+          }
+          if (!revoked) {
             return {
               status: 'pairing_cleanup_required',
               recoverable: false,
@@ -244,8 +289,16 @@
       revoke(connection) {
         return revokeConnection(connection);
       },
-      revokePending() {
-        return pendingRevocation ? revokeConnection(pendingRevocation) : Promise.resolve(true);
+      async revokePending() {
+        const durable = await revocations.list();
+        let complete = true;
+        for (const revocation of durable) {
+          complete = (await revokeConnection(revocation)) === true && complete;
+        }
+        if (pendingRevocation && !durable.some((entry) => entry.token === pendingRevocation.token)) {
+          complete = (await revokeConnection(pendingRevocation)) === true && complete;
+        }
+        return complete;
       },
       async checkConnection() {
         const stored = await storage.get('redline_connection');

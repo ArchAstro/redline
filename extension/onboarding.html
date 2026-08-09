@@ -45,7 +45,7 @@
         </div>
         <div>
           <dt>Where it stays</dt>
-          <dd>Submitted feedback stays in the local Redline sidecar. Redline schedules in-progress Chrome drafts and temporary screenshots for deletion after seven days and removes expired drafts the next time Chrome runs.</dd>
+          <dd>Submitted feedback stays in the local Redline sidecar. Chrome keeps in-progress drafts, temporary screenshots, and pending-page markers for at most seven days, then Redline removes them the next time Chrome runs.</dd>
         </div>
         <div>
           <dt>Who receives it</dt>
@@ -53,7 +53,7 @@
         </div>
         <div>
           <dt>Your controls</dt>
-          <dd>You can delete individual feedback or use Clear all local Redline data. Disconnecting stops this browser without deleting submitted feedback.</dd>
+          <dd>You can delete individual feedback or use Clear all local Redline data. A content-free clear receipt is kept for 30 days so an interrupted clear can finish safely. Disconnecting stops this browser without deleting submitted feedback.</dd>
         </div>
       </dl>
       <label class="consent-row" for="consent">
@@ -69,10 +69,9 @@
     <section id="site-step" class="site-step" aria-labelledby="site-title" hidden>
       <div class="section-heading">
         <p class="step">Ready</p>
-        <h2 id="site-title">Redline is connected</h2>
+        <h2 id="site-title" tabindex="-1">Redline is connected</h2>
       </div>
-      <p>Open the page you want to review, then enable Redline for that site from the extension.</p>
-      <button type="button" id="enable-site">Enable Redline on this site</button>
+      <p>Open the page you want to review, click the Redline toolbar button, and enable that site.</p>
     </section>
 
     <section id="declined-step" class="declined-step" aria-labelledby="declined-title" hidden>
@@ -81,6 +80,7 @@
     </section>
   </main>
 
+  <script src="revocations.js"></script>
   <script src="connection.js"></script>
   <script src="onboarding.js"></script>
 </body>
