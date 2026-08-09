@@ -26,6 +26,7 @@ function synchronizeVersions(root, check) {
   const version = readJson(root, 'package.json').version;
   const targets = [
     ['extension/manifest.json', (value) => { value.version = version; }],
+    ['extension/manifest.dev.json', (value) => { value.version = version; }],
   ];
   const mismatches = [];
   for (const [relativePath, update] of targets) {
