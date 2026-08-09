@@ -172,10 +172,14 @@ async function sha256Hex(value) {
 
 function productionBackground({
   connection, fetch, captureVisibleTab, storageArea = null, indexedDb = null, decodeBase64 = atob,
+  getTab = async () => ({ id: 7, windowId: 3, active: true, url: "https://example.test/page" }),
+  permissionControllerFactory = null,
   config = { token: "must-not-be-used-in-production", port: 7878 },
 }) {
   let messageHandler;
   let captures = 0;
+  let tabUpdatedHandler = () => {};
+  let tabActivatedHandler = () => {};
   const effectiveStorage = storageArea || localStorageArea(
     connection ? { redline_connection: connection } : {}
   );
@@ -187,8 +191,10 @@ function productionBackground({
   sessionStorage.setAccessLevel = async () => {};
   const context = {
     AbortController,
+    URL,
     URLSearchParams,
     atob: decodeBase64,
+    btoa,
     console,
     crypto: webcrypto,
     TextEncoder,
@@ -210,30 +216,679 @@ function productionBackground({
         onAlarm: { addListener(handler) { alarmHandler = handler; } },
       },
       tabs: {
-        async get() { return { id: 7, windowId: 3, url: "https://example.test/page" }; },
+        get: getTab,
         async captureVisibleTab(...args) {
           captures += 1;
           return captureVisibleTab(...args);
         },
-        onUpdated: { addListener() {} },
+        onUpdated: { addListener(handler) { tabUpdatedHandler = handler; } },
+        onActivated: { addListener(handler) { tabActivatedHandler = handler; } },
         onRemoved: { addListener() {} },
       },
       runtime: {
+        id: "redline-test-extension",
         onMessage: { addListener(handler) { messageHandler = handler; } },
       },
     },
   };
+  if (permissionControllerFactory) {
+    context.RedlinePermissions = { createPermissionController: permissionControllerFactory };
+    context.chrome.permissions = {};
+    context.chrome.scripting = {};
+  }
+  context.RedlineRevocations = require("../extension/revocations");
   vm.runInNewContext(backgroundSource, context);
   return {
     captures: () => captures,
     indexedDb: effectiveIndexedDb,
+    local: effectiveStorage,
+    session: sessionStorage,
     alarms,
     async fireAlarm(name) { await alarmHandler({ name }); },
-    send(message) {
-      return new Promise((resolve) => messageHandler(message, { tab: { id: 7 } }, resolve));
+    fireTabUpdated(tabId, info) { tabUpdatedHandler(tabId, info); },
+    fireTabActivated(info) { tabActivatedHandler(info); },
+    send(message, sender = {
+      id: "redline-test-extension",
+      frameId: 0,
+      url: "https://example.test/page",
+      tab: { id: 7, url: "https://example.test/page" },
+    }) {
+      return new Promise((resolve) => messageHandler(message, sender, resolve));
     },
   };
 }
+
+test("the service worker retries a durable browser credential revocation", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  const storage = localStorageArea({ redline_connection: connection });
+  let deletes = 0;
+  const background = productionBackground({
+    connection,
+    storageArea: storage,
+    fetch: async (url, options) => {
+      assert.equal(url.endsWith("/clients/current"), true);
+      assert.equal(options.method, "DELETE");
+      assert.equal(options.headers.authorization, `Bearer ${connection.token}`);
+      deletes += 1;
+      return { ok: true, status: 204, async json() { throw new Error("no body"); } };
+    },
+  });
+  background.local.data[`redline_pending_revocation::${connection.client_id}`] = {
+    client_id: connection.client_id,
+    token: connection.token,
+  };
+
+  await background.fireAlarm("redline-revocation-retry");
+
+  assert.equal(deletes, 1);
+  assert.equal(Object.hasOwn(background.local.data, "redline_connection"), false);
+  assert.equal(Object.keys(background.local.data).some((key) => key.startsWith("redline_pending_revocation::")), false);
+});
+
+test("finishing one revocation cannot erase a newer queued browser token", async () => {
+  const first = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "a".repeat(43),
+  };
+  const second = {
+    client_id: "rlc_fedcba9876543210fedcba9876543210",
+    token: "b".repeat(43),
+  };
+  let releaseFirst;
+  const firstDelete = new Promise((resolve) => { releaseFirst = resolve; });
+  const deleted = [];
+  const firstKey = `redline_pending_revocation::${first.client_id}`;
+  const secondKey = `redline_pending_revocation::${second.client_id}`;
+  const storage = localStorageArea({ [firstKey]: first });
+  const background = productionBackground({
+    storageArea: storage,
+    fetch: async (_url, options) => {
+      const token = options.headers.authorization.replace(/^Bearer /, "");
+      deleted.push(token);
+      if (token === first.token) await firstDelete;
+      return { ok: true, status: 204 };
+    },
+  });
+
+  const maintaining = background.fireAlarm("redline-revocation-retry");
+  await waitUntil(() => deleted.includes(first.token), "first revocation did not start");
+  await storage.set({ [secondKey]: second });
+  releaseFirst();
+  await maintaining;
+
+  assert.deepEqual(storage.data[secondKey], second);
+  assert.equal(Object.hasOwn(storage.data, firstKey), false);
+  await background.fireAlarm("redline-revocation-retry");
+  assert.equal(Object.keys(storage.data).some((key) => key.startsWith("redline_pending_revocation::")), false);
+  assert.deepEqual(deleted, [first.token, second.token]);
+});
+
+test("popup disconnect persists revocation and removes this profile's pending drafts", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  const key = "redline_pending::draft_disconnect_012345";
+  const createdAt = new Date(Date.now() - 1000).toISOString();
+  const expiresAt = new Date(Date.parse(createdAt) + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const locator = { version: 3, created_at: createdAt, expires_at: expiresAt };
+  const storage = localStorageArea({ redline_connection: connection, [key]: locator });
+  const indexedDb = indexedDbArea();
+  indexedDb.records.set(key, locator);
+  const background = productionBackground({
+    connection,
+    storageArea: storage,
+    indexedDb,
+    fetch: async (url, options) => {
+      assert.equal(url.endsWith("/clients/current"), true);
+      assert.equal(options.method, "DELETE");
+      return { ok: true, status: 204 };
+    },
+  });
+
+  assert.deepEqual(structuredClone(await background.send({ type: "disconnect" })), {
+    ok: true, disconnected: true,
+  });
+  assert.equal(Object.hasOwn(background.local.data, "redline_connection"), false);
+  assert.equal(Object.hasOwn(background.local.data, "redline_pending_revocation"), false);
+  assert.equal(Object.hasOwn(storage.data, key), false);
+  assert.equal(indexedDb.records.size, 0);
+});
+
+test("popup clear removes sidecar data, pending drafts, and the local connection", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  const key = "redline_pending::draft_clear_popup_012345";
+  const storage = localStorageArea({
+    redline_connection: connection,
+    [key]: { version: 1 },
+    "rl_items::https://example.test/page": [{ item: { id: "rl_marker" }, ser: { text: "copy" } }],
+    rl_last_project: "website",
+  });
+  const indexedDb = indexedDbArea();
+  indexedDb.records.set(key, { version: 2 });
+  const background = productionBackground({
+    connection,
+    storageArea: storage,
+    indexedDb,
+    fetch: async (url, options) => {
+      assert.equal(url.endsWith("/clear"), true);
+      assert.equal(options.method, "POST");
+      return {
+        ok: true,
+        status: 200,
+        async json() { return { clear_generation: 1 }; },
+      };
+    },
+  });
+  background.session.data.redline_pairing_secret = {
+    secret: "s".repeat(43),
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+  };
+  background.alarms.set("redline-pairing-secret-expiry", {
+    name: "redline-pairing-secret-expiry",
+    scheduledTime: Date.now() + 60_000,
+  });
+
+  assert.deepEqual(structuredClone(await background.send({ type: "clear-data" })), {
+    ok: true, clear_generation: 1,
+  });
+  assert.deepEqual(storage.data, {});
+  assert.deepEqual(background.session.data, {});
+  assert.equal(background.alarms.has("redline-pairing-secret-expiry"), false);
+  assert.equal(indexedDb.records.size, 0);
+});
+
+test("expired browser markers are deleted without revisiting their pages", async () => {
+  const expiredAt = new Date(Date.now() - 1_000).toISOString();
+  const futureAt = new Date(Date.now() + 60_000).toISOString();
+  const storage = localStorageArea({
+    "rl_items::https://expired.test/page": [{
+      item: { id: "rl_expired" }, ser: { text: "old" }, expires_at: expiredAt,
+    }],
+    "rl_items::https://future.test/page": [{
+      item: { id: "rl_future" }, ser: { text: "new" }, expires_at: futureAt,
+    }],
+  });
+  const background = productionBackground({ storageArea: storage });
+
+  await background.fireAlarm("redline-pending-cleanup");
+
+  assert.equal(Object.hasOwn(storage.data, "rl_items::https://expired.test/page"), false);
+  assert.deepEqual(storage.data["rl_items::https://future.test/page"], [{
+    item: { id: "rl_future" }, ser: { text: "new" }, expires_at: futureAt,
+  }]);
+  assert.equal(background.alarms.get("redline-pending-cleanup").scheduledTime, Date.parse(futureAt));
+});
+
+test("a stale content script cannot handle page data after its site is disabled", async () => {
+  let requests = 0;
+  const background = productionBackground({
+    fetch: async () => { requests += 1; throw new Error("must not fetch"); },
+    permissionControllerFactory: () => ({
+      async start() {},
+      async getState() {
+        return { supported: true, siteEnabled: false, fullVisualEnabled: false };
+      },
+    }),
+  });
+  const sender = {
+    id: "redline-test-extension",
+    frameId: 0,
+    url: "https://example.test/page",
+    tab: { id: 7, url: "https://example.test/page" },
+  };
+
+  for (const message of [
+    { type: "marker-storage-get", keys: ["rl_items::https://example.test/page"] },
+    { type: "submit-redline", payload: { selected_text: "secret" } },
+    { type: "list-redlines", status: "pending", origin: "https://example.test" },
+    { type: "update-redline", id: "rl_1", payload: { comment: "secret" } },
+    { type: "delete-redline", id: "rl_1" },
+  ]) {
+    const response = await background.send(message, sender);
+    assert.equal(response.ok, false, message.type);
+    assert.equal(response.error_code, "site_not_enabled", message.type);
+  }
+  assert.equal(requests, 0);
+});
+
+test("popup clear durably retries browser cleanup after the sidecar commits", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  const key = "redline_pending::draft_clear_failure_012345";
+  const storage = localStorageArea({ redline_connection: connection, [key]: { version: 1 } });
+  const indexedDb = indexedDbArea({ failDelete: true });
+  indexedDb.records.set(key, { version: 2 });
+  let sidecarClears = 0;
+  const background = productionBackground({
+    connection,
+    storageArea: storage,
+    indexedDb,
+    fetch: async () => {
+      sidecarClears += 1;
+      return { ok: true, status: 200, async json() { return { clear_generation: 1 }; } };
+    },
+  });
+
+  const response = structuredClone(await background.send({ type: "clear-data" }));
+
+  assert.equal(response.ok, false);
+  assert.equal(sidecarClears, 1);
+  assert.equal(Object.hasOwn(storage.data, "redline_connection"), true);
+  assert.equal(storage.data.redline_pending_clear.state, "committed");
+
+  indexedDb.failures.delete = false;
+  await background.fireAlarm("redline-clear-cleanup-retry");
+  assert.equal(Object.hasOwn(storage.data, "redline_connection"), false);
+  assert.equal(Object.hasOwn(storage.data, "redline_pending_clear"), false);
+});
+
+test("popup clear does not erase browser data when the sidecar rejects its token", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  const key = "rl_items::https://example.test/page";
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  const storage = localStorageArea({
+    redline_connection: connection,
+    [key]: [{ item: { id: "rl_keep" }, ser: { text: "keep" }, expires_at: expiresAt }],
+  });
+  const background = productionBackground({
+    connection,
+    storageArea: storage,
+    fetch: async () => ({
+      ok: false,
+      status: 401,
+      async json() { return { error: { code: "unauthorized" } }; },
+    }),
+  });
+
+  const response = structuredClone(await background.send({ type: "clear-data" }));
+
+  assert.equal(response.ok, false);
+  assert.equal(Object.hasOwn(storage.data, "redline_connection"), true);
+  assert.equal(Object.hasOwn(storage.data, key), true);
+  assert.equal(storage.data.redline_pending_clear.state, "requested");
+});
+
+test("content scripts can persist only marker data for their own top-level page", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  const background = productionBackground({ connection, fetch: async () => generationResponse() });
+  const sender = {
+    id: "redline-test-extension",
+    frameId: 0,
+    url: "https://example.test/page?draft=1",
+    tab: { id: 7, url: "https://example.test/page?draft=1" },
+  };
+  const pageKey = "rl_items::https://example.test/page";
+  const markers = [{
+    item: { id: "rl_marker" },
+    ser: { text: "copy" },
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+  }];
+
+  assert.deepEqual(structuredClone(await background.send({
+    type: "marker-storage-set", values: { [pageKey]: markers, rl_last_project: "website" },
+  }, sender)), { ok: true });
+  assert.deepEqual(structuredClone(await background.send({
+    type: "marker-storage-get", keys: [pageKey, "rl_last_project"],
+  }, sender)), { ok: true, values: { [pageKey]: markers, rl_last_project: "website" } });
+
+  const rejected = structuredClone(await background.send({
+    type: "marker-storage-get", keys: ["redline_connection"],
+  }, sender));
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.error_code, "invalid_marker_storage");
+});
+
+test("disconnect waits for an in-flight submission before revoking the profile", async (t) => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let releaseCapture;
+  const capture = new Promise((resolve) => { releaseCapture = resolve; });
+  t.after(() => releaseCapture());
+  const events = [];
+  const background = productionBackground({
+    connection,
+    captureVisibleTab: async () => {
+      events.push("capture-start");
+      await capture;
+      events.push("capture-done");
+      return `data:image/png;base64,${VALID_PNG_BASE64}`;
+    },
+    fetch: async (url, options = {}) => {
+      if (url.endsWith("/generation")) return generationResponse();
+      if (url.endsWith("/redlines") && options.method === "POST") {
+        events.push("submitted");
+        return { ok: true, status: 201, async json() { return { id: "rl_before_disconnect" }; } };
+      }
+      if (url.endsWith("/clients/current") && options.method === "DELETE") {
+        events.push("revoked");
+        return { ok: true, status: 204 };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  const submitting = background.send({ type: "submit-redline", payload: { comment: "finish me" } });
+  await waitUntil(() => events.includes("capture-start"), "capture did not start");
+  const disconnecting = background.send({ type: "disconnect" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["capture-start"]);
+
+  releaseCapture();
+  assert.equal((await submitting).ok, true);
+  assert.equal((await disconnecting).ok, true);
+  assert.deepEqual(events, ["capture-start", "capture-done", "submitted", "revoked"]);
+});
+
+test("clear waits for an in-flight submission before clearing sidecar data", async (t) => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let releaseCapture;
+  const capture = new Promise((resolve) => { releaseCapture = resolve; });
+  t.after(() => releaseCapture());
+  const events = [];
+  const background = productionBackground({
+    connection,
+    captureVisibleTab: async () => {
+      events.push("capture-start");
+      await capture;
+      events.push("capture-done");
+      return `data:image/png;base64,${VALID_PNG_BASE64}`;
+    },
+    fetch: async (url, options = {}) => {
+      if (url.endsWith("/generation")) return generationResponse();
+      if (url.endsWith("/redlines") && options.method === "POST") {
+        events.push("submitted");
+        return { ok: true, status: 201, async json() { return { id: "rl_before_clear" }; } };
+      }
+      if (url.endsWith("/clear") && options.method === "POST") {
+        events.push("cleared");
+        return { ok: true, status: 200, async json() { return { clear_generation: 1 }; } };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  const submitting = background.send({ type: "submit-redline", payload: { comment: "finish me" } });
+  await waitUntil(() => events.includes("capture-start"), "capture did not start");
+  const clearing = background.send({ type: "clear-data" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["capture-start"]);
+
+  releaseCapture();
+  assert.equal((await submitting).ok, true);
+  assert.equal((await clearing).ok, true);
+  assert.deepEqual(events, ["capture-start", "capture-done", "submitted", "cleared"]);
+});
+
+test("a tab switch during capture cannot attach another tab's screenshot", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let active = true;
+  let submitted;
+  const background = productionBackground({
+    connection,
+    getTab: async () => ({
+      id: 7, windowId: 3, active, url: "https://enabled.test/page",
+    }),
+    captureVisibleTab: async () => {
+      active = false;
+      return `data:image/png;base64,${VALID_PNG_BASE64}`;
+    },
+    fetch: async (url, options = {}) => {
+      if (url.endsWith("/generation")) return generationResponse();
+      if (url.endsWith("/redlines") && options.method === "POST") {
+        submitted = JSON.parse(options.body);
+        return { ok: true, status: 201, async json() { return { id: "rl_without_wrong_shot" }; } };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  assert.equal((await background.send({
+    type: "submit-redline", payload: { comment: "do not leak another tab" },
+  })).ok, true);
+  assert.equal(Object.hasOwn(submitted, "screenshot_png"), false);
+});
+
+test("an inactive submitting tab is never captured", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let captures = 0;
+  let submitted;
+  const background = productionBackground({
+    connection,
+    getTab: async () => ({
+      id: 7, windowId: 3, active: false, url: "https://enabled.test/page",
+    }),
+    captureVisibleTab: async () => {
+      captures += 1;
+      return `data:image/png;base64,${VALID_PNG_BASE64}`;
+    },
+    fetch: async (url, options = {}) => {
+      if (url.endsWith("/generation")) return generationResponse();
+      if (url.endsWith("/redlines") && options.method === "POST") {
+        submitted = JSON.parse(options.body);
+        return { ok: true, status: 201, async json() { return { id: "rl_inactive" }; } };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  assert.equal((await background.send({
+    type: "submit-redline", payload: { comment: "inactive" },
+  })).ok, true);
+  assert.equal(captures, 0);
+  assert.equal(Object.hasOwn(submitted, "screenshot_png"), false);
+});
+
+test("navigation before capture cannot attach a screenshot from an unenabled page", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let captures = 0;
+  let submitted;
+  const background = productionBackground({
+    connection,
+    getTab: async () => ({
+      id: 7, windowId: 3, active: true, url: "https://other.test/page",
+    }),
+    captureVisibleTab: async () => {
+      captures += 1;
+      return `data:image/png;base64,${VALID_PNG_BASE64}`;
+    },
+    fetch: async (url, options = {}) => {
+      if (url.endsWith("/generation")) return generationResponse();
+      if (url.endsWith("/redlines") && options.method === "POST") {
+        submitted = JSON.parse(options.body);
+        return { ok: true, status: 201, async json() { return { id: "rl_navigated" }; } };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  assert.equal((await background.send(
+    { type: "submit-redline", payload: { comment: "navigated" } },
+    { tab: { id: 7, url: "https://enabled.test/page" } }
+  )).ok, true);
+  assert.equal(captures, 0);
+  assert.equal(Object.hasOwn(submitted, "screenshot_png"), false);
+});
+
+test("switching away and back during capture invalidates the screenshot", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let submitted;
+  let background;
+  background = productionBackground({
+    connection,
+    getTab: async () => ({
+      id: 7, windowId: 3, active: true, url: "https://enabled.test/page",
+    }),
+    captureVisibleTab: async () => {
+      background.fireTabActivated({ tabId: 8, windowId: 3 });
+      background.fireTabActivated({ tabId: 7, windowId: 3 });
+      return `data:image/png;base64,${VALID_PNG_BASE64}`;
+    },
+    fetch: async (url, options = {}) => {
+      if (url.endsWith("/generation")) return generationResponse();
+      if (url.endsWith("/redlines") && options.method === "POST") {
+        submitted = JSON.parse(options.body);
+        return { ok: true, status: 201, async json() { return { id: "rl_aba" }; } };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  assert.equal((await background.send(
+    { type: "submit-redline", payload: { comment: "aba" } },
+    { tab: { id: 7, url: "https://enabled.test/page" } }
+  )).ok, true);
+  assert.equal(Object.hasOwn(submitted, "screenshot_png"), false);
+});
+
+test("revoking screenshot access during capture prevents the PNG from being submitted", async (t) => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let releaseCapture;
+  const capture = new Promise((resolve) => { releaseCapture = resolve; });
+  t.after(() => releaseCapture(`data:image/png;base64,${VALID_PNG_BASE64}`));
+  let revokePermission;
+  let allowed = true;
+  let submitted;
+  const controller = {
+    async start() {},
+    async reconcile() {},
+    async getState() { return { supported: true, siteEnabled: true, fullVisualEnabled: true }; },
+    async canCaptureScreenshot() { return allowed; },
+  };
+  const background = productionBackground({
+    connection,
+    permissionControllerFactory: ({ onPermissionsChanged }) => {
+      revokePermission = onPermissionsChanged;
+      return controller;
+    },
+    captureVisibleTab: async () => await capture,
+    fetch: async (url, options = {}) => {
+      if (url.endsWith("/generation")) return generationResponse();
+      submitted = JSON.parse(options.body);
+      return { ok: true, status: 201, async json() { return { id: "rl_without_revoked_shot" }; } };
+    },
+  });
+
+  const submission = background.send({ type: "submit-redline", payload: { comment: "No revoked PNG" } });
+  await new Promise((resolve) => setImmediate(resolve));
+  allowed = false;
+  revokePermission();
+  releaseCapture(`data:image/png;base64,${VALID_PNG_BASE64}`);
+
+  assert.equal((await submission).ok, true);
+  assert.equal(Object.hasOwn(submitted, "screenshot_png"), false);
+});
+
+test("a cached screenshot is revalidated before it can be reused", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let permissionChecks = 0;
+  const bodies = [];
+  const controller = {
+    async start() {},
+    async reconcile() {},
+    async getState() { return { supported: true, siteEnabled: true, fullVisualEnabled: true }; },
+    async canCaptureScreenshot() {
+      permissionChecks += 1;
+      return permissionChecks < 4;
+    },
+  };
+  const background = productionBackground({
+    connection,
+    permissionControllerFactory: () => controller,
+    captureVisibleTab: async () => `data:image/png;base64,${VALID_PNG_BASE64}`,
+    fetch: async (url, options = {}) => {
+      if (url.endsWith("/generation")) return generationResponse();
+      bodies.push(JSON.parse(options.body));
+      return { ok: true, status: 201, async json() { return { id: `rl_cached_${bodies.length}` }; } };
+    },
+  });
+
+  assert.equal((await background.send({ type: "submit-redline", payload: { comment: "first" } })).ok, true);
+  assert.equal((await background.send({ type: "submit-redline", payload: { comment: "second" } })).ok, true);
+
+  assert.equal(Object.hasOwn(bodies[0], "screenshot_png"), true);
+  assert.equal(Object.hasOwn(bodies[1], "screenshot_png"), false);
+  assert.equal(background.captures(), 1);
+});
 
 test("the service worker removes failed drafts when their seven-day retention expires", async () => {
   const connection = {
@@ -270,6 +925,42 @@ test("the service worker removes failed drafts when their seven-day retention ex
 
   assert.equal(indexedDb.records.size, 0);
   assert.deepEqual(Object.keys(storage.data), ["redline_connection"]);
+});
+
+test("startup deletes legacy pending drafts whose age cannot be proven", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  const key = "redline_pending::draft_legacy_cleanup_012345";
+  const storage = localStorageArea({
+    redline_connection: connection,
+    [key]: {
+      version: 2,
+      client_id: connection.client_id,
+      source_hash: "a".repeat(64),
+      operation_id: "legacy_cleanup_012345",
+      payload_hash: "b".repeat(64),
+    },
+  });
+  const indexedDb = indexedDbArea();
+  indexedDb.records.set(key, {
+    version: 2,
+    client_id: connection.client_id,
+    source_hash: "a".repeat(64),
+    operation_id: "legacy_cleanup_012345",
+    payload: { operation_id: "legacy_cleanup_012345", clear_generation: 0 },
+    payload_hash: "b".repeat(64),
+  });
+
+  productionBackground({ connection, storageArea: storage, indexedDb });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(indexedDb.records.size, 0);
+  assert.equal(Object.hasOwn(storage.data, key), false);
 });
 
 test("editing local storage cannot forge consent or persist selected content", async () => {
@@ -530,7 +1221,7 @@ test("a corrupted IndexedDB screenshot fails closed before retry network activit
   assert.equal(storage.data[key].operation_id, record.operation_id);
 });
 
-test("a legacy storage.local pending draft migrates to IndexedDB before retry", async () => {
+test("startup discards a legacy local draft before creating a fresh retry", async () => {
   const connection = {
     client_id: "rlc_0123456789abcdef0123456789abcdef",
     token: "t".repeat(43),
@@ -560,9 +1251,9 @@ test("a legacy storage.local pending draft migrates to IndexedDB before retry", 
   const bodies = [];
   const firstWorker = productionBackground({
     connection, storageArea: storage, indexedDb,
-    captureVisibleTab: async () => { throw new Error("must not recapture"); },
+    captureVisibleTab: async () => `data:image/png;base64,${VALID_PNG_BASE64}`,
     fetch: async (url, options) => {
-      assert.equal(url.endsWith("/redlines"), true);
+      if (url.endsWith("/generation")) return generationResponse();
       bodies.push(options.body);
       throw new TypeError("keep migrated retry pending");
     },
@@ -571,7 +1262,7 @@ test("a legacy storage.local pending draft migrates to IndexedDB before retry", 
     type: "submit-redline", submission_key: "draft_legacy_pending_012345", payload: messagePayload,
   };
   assert.equal((await firstWorker.send(message)).ok, false);
-  assert.equal(firstWorker.captures(), 0);
+  assert.equal(firstWorker.captures(), 1);
   assert.equal(storage.data[key].version, 3);
   assert.equal(Object.hasOwn(storage.data[key], "payload"), false);
   assert.equal(indexedDb.records.get(key).version, 3);
@@ -591,7 +1282,7 @@ test("a legacy storage.local pending draft migrates to IndexedDB before retry", 
   assert.deepEqual(Object.keys(storage.data), ["redline_connection"]);
 });
 
-test("a pending locator without its IndexedDB record fails closed", async () => {
+test("startup discards a legacy locator without its IndexedDB record", async () => {
   const connection = {
     client_id: "rlc_0123456789abcdef0123456789abcdef",
     token: "t".repeat(43),
@@ -624,18 +1315,20 @@ test("a pending locator without its IndexedDB record fails closed", async () => 
   let fetches = 0;
   const background = productionBackground({
     connection, storageArea: storage, indexedDb: indexedDbArea(),
-    captureVisibleTab: async () => { throw new Error("must not recapture"); },
-    fetch: async () => { fetches += 1; throw new Error("must not fetch"); },
+    captureVisibleTab: async () => { throw new Error("no screenshot"); },
+    fetch: async (url) => {
+      fetches += 1;
+      if (url.endsWith("/generation")) return generationResponse();
+      return { ok: true, status: 200, async json() { return { id: "rl_replaced" }; } };
+    },
   });
 
   const result = await background.send({
     type: "submit-redline", submission_key: "draft_missing_record_012345", payload: messagePayload,
   });
-  assert.equal(result.ok, false);
-  assert.equal(result.error_code, "pending_submission_invalid");
-  assert.equal(fetches, 0);
-  assert.equal(background.captures(), 0);
-  assert.ok(storage.data[key]);
+  assert.equal(result.ok, true);
+  assert.equal(fetches, 2);
+  assert.equal(Object.hasOwn(storage.data, key), false);
 });
 
 test("a new custom-port draft fetches the post-clear generation before submission", async () => {
@@ -731,7 +1424,69 @@ test("production uses paired bearer auth and reserves the legacy header for cust
   assert.match(backgroundSource, /headers:\s*\{ authorization: `Bearer \$\{connection\.token\}` \}/);
   assert.match(backgroundSource, /if \(DEV_MODE\)[\s\S]*'x-redline-token': token/);
   assert.doesNotMatch(backgroundSource, /REDLINE_AUTH_HEADERS/);
-  assert.doesNotMatch(backgroundSource, /\/screenshots/);
+  assert.match(backgroundSource, /\/screenshots\/\$\{msg\.id\}/);
+});
+
+test("popup retrieves screenshots only through the authenticated trusted worker", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let request;
+  const png = Buffer.from(VALID_PNG_BASE64, "base64");
+  const background = productionBackground({
+    connection,
+    fetch: async (url, options) => {
+      request = { url, options };
+      return {
+        ok: true,
+        status: 200,
+        async arrayBuffer() {
+          return png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength);
+        },
+      };
+    },
+  });
+
+  const response = await background.send(
+    { type: "get-screenshot", id: "ss_0123456789abcdef0123456789abcdef" },
+    {
+      id: "redline-test-extension",
+      frameId: 0,
+      url: "chrome-extension://redline-test-extension/popup.html",
+    },
+  );
+
+  assert.deepEqual(structuredClone(response), { ok: true, screenshot_png: VALID_PNG_BASE64 });
+  assert.equal(request.url.endsWith("/screenshots/ss_0123456789abcdef0123456789abcdef"), true);
+  assert.equal(request.options.headers.authorization, `Bearer ${connection.token}`);
+});
+
+test("popup connection status verifies the stored capability with the authenticated generation endpoint", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let request;
+  const background = productionBackground({
+    connection,
+    fetch: async (url, options) => {
+      request = { url, options };
+      return generationResponse();
+    },
+  });
+
+  assert.deepEqual(structuredClone(await background.send({ type: "connection-status" })), {
+    ok: true, connected: true,
+  });
+  assert.equal(request.url.endsWith("/generation"), true);
+  assert.equal(request.options.headers.authorization, `Bearer ${connection.token}`);
 });
 
 test("a sidecar 401 explains how to refresh the stale extension context", async () => {
@@ -765,6 +1520,7 @@ test("a sidecar 401 explains how to refresh the stale extension context", async 
       },
     },
   };
+  context.RedlineRevocations = require("../extension/revocations");
   vm.runInNewContext(backgroundSource, context);
 
   const response = await new Promise((resolve) => {
@@ -813,7 +1569,7 @@ test("a stalled screenshot capture cannot block redline submission", async () =>
       storage: pairedStorage(),
       tabs: {
         async get() {
-          return { id: 7, windowId: 3, url: "http://localhost:3404/" };
+          return { id: 7, windowId: 3, active: true, url: "http://localhost:3404/" };
         },
         captureVisibleTab() {
           return new Promise(() => {});
@@ -830,6 +1586,7 @@ test("a stalled screenshot capture cannot block redline submission", async () =>
       },
     },
   };
+  context.RedlineRevocations = require("../extension/revocations");
   vm.runInNewContext(
     backgroundSource,
     context
@@ -887,7 +1644,7 @@ test("deleting a redline invalidates cached screenshot IDs", async () => {
       storage: pairedStorage(),
       tabs: {
         async get() {
-          return { id: 7, windowId: 3, url: "https://example.test/" };
+          return { id: 7, windowId: 3, active: true, url: "https://example.test/" };
         },
         async captureVisibleTab() {
           captures += 1;
@@ -905,10 +1662,11 @@ test("deleting a redline invalidates cached screenshot IDs", async () => {
       },
     },
   };
+  context.RedlineRevocations = require("../extension/revocations");
   vm.runInNewContext(backgroundSource, context);
 
   const send = (message) => new Promise((resolve) => {
-    messageHandler(message, { tab: { id: 7 } }, resolve);
+    messageHandler(message, { tab: { id: 7, url: "https://example.test/" } }, resolve);
   });
 
   assert.equal((await send({ type: "submit-redline", payload: { comment: "first" } })).ok, true);
@@ -956,7 +1714,7 @@ test("delete waits for an in-flight screenshot and redline creation", async (t) 
       storage: pairedStorage(),
       tabs: {
         async get() {
-          return { id: 7, windowId: 3, url: "https://example.test/" };
+          return { id: 7, windowId: 3, active: true, url: "https://example.test/" };
         },
         async captureVisibleTab() {
           events.push("screenshot-start");
@@ -976,10 +1734,11 @@ test("delete waits for an in-flight screenshot and redline creation", async (t) 
       },
     },
   };
+  context.RedlineRevocations = require("../extension/revocations");
   vm.runInNewContext(backgroundSource, context);
 
   const send = (message) => new Promise((resolve) => {
-    messageHandler(message, { tab: { id: 7 } }, resolve);
+    messageHandler(message, { tab: { id: 7, url: "https://example.test/" } }, resolve);
   });
   const submitting = send({ type: "submit-redline", payload: { comment: "new" } });
   await waitUntil(() => events.includes("screenshot-start"), "screenshot capture did not start");
@@ -1031,7 +1790,7 @@ test("refresh waits for an in-flight submission before invalidating its screensh
       storage: pairedStorage(),
       tabs: {
         async get() {
-          return { id: 7, windowId: 3, url: "https://example.test/" };
+          return { id: 7, windowId: 3, active: true, url: "https://example.test/" };
         },
         async captureVisibleTab() {
           captures += 1;
@@ -1052,10 +1811,11 @@ test("refresh waits for an in-flight submission before invalidating its screensh
       },
     },
   };
+  context.RedlineRevocations = require("../extension/revocations");
   vm.runInNewContext(backgroundSource, context);
 
   const send = (message) => new Promise((resolve) => {
-    messageHandler(message, { tab: { id: 7 } }, resolve);
+    messageHandler(message, { tab: { id: 7, url: "https://example.test/" } }, resolve);
   });
   const submitting = send({ type: "submit-redline", payload: { comment: "first" } });
   await waitUntil(() => events.includes("screenshot-start"), "screenshot capture did not start");
@@ -1109,7 +1869,7 @@ test("a timed-out sidecar request releases the screenshot operation queue", asyn
       storage: pairedStorage(),
       tabs: {
         async get() {
-          return { id: 7, windowId: 3, url: "https://example.test/" };
+          return { id: 7, windowId: 3, active: true, url: "https://example.test/" };
         },
         async captureVisibleTab() {
           return `data:image/png;base64,${VALID_PNG_BASE64}`;
@@ -1126,10 +1886,11 @@ test("a timed-out sidecar request releases the screenshot operation queue", asyn
       },
     },
   };
+  context.RedlineRevocations = require("../extension/revocations");
   vm.runInNewContext(backgroundSource, context);
 
   const send = (message) => new Promise((resolve) => {
-    messageHandler(message, { tab: { id: 7 } }, resolve);
+    messageHandler(message, { tab: { id: 7, url: "https://example.test/" } }, resolve);
   });
   const submitted = await send({ type: "submit-redline", payload: { comment: "stalls" } });
   assert.equal(submitted.ok, false);
@@ -1185,7 +1946,7 @@ test("a stalled response body times out and releases the screenshot operation qu
       storage: pairedStorage(),
       tabs: {
         async get() {
-          return { id: 7, windowId: 3, url: "https://example.test/" };
+          return { id: 7, windowId: 3, active: true, url: "https://example.test/" };
         },
         async captureVisibleTab() {
           return `data:image/png;base64,${VALID_PNG_BASE64}`;
@@ -1202,10 +1963,11 @@ test("a stalled response body times out and releases the screenshot operation qu
       },
     },
   };
+  context.RedlineRevocations = require("../extension/revocations");
   vm.runInNewContext(backgroundSource, context);
 
   const send = (message) => new Promise((resolve) => {
-    messageHandler(message, { tab: { id: 7 } }, resolve);
+    messageHandler(message, { tab: { id: 7, url: "https://example.test/" } }, resolve);
   });
   const submitted = await send({ type: "submit-redline", payload: { comment: "stalls" } });
   assert.equal(submitted.ok, false);

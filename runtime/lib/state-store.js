@@ -17,6 +17,7 @@ const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024;
 const MAX_SCREENSHOT_DIMENSION = 8192;
 const MAX_SCREENSHOT_PIXELS = 16 * 1024 * 1024;
 const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const CLEAR_RECEIPT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const CREATION_RESPONSE_KEYS = 'comment,context,created_at,id,origin,project,rect,screenshot_id,screenshot_sha256,selected_text,status,title,url';
 let pngDecoder = null;
 
@@ -39,6 +40,7 @@ function defaultState() {
     pairing: null,
     clients: {},
     clear_generation: 0,
+    clear_receipts: {},
     redlines: {},
     operations: {},
     legacy_migrated: false,
@@ -104,6 +106,7 @@ function validatePng(buffer, { submission = false } = {}) {
 function validateState(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || value.version !== STATE_VERSION ||
       !Number.isSafeInteger(value.clear_generation) || value.clear_generation < 0 ||
+      !value.clear_receipts || typeof value.clear_receipts !== 'object' || Array.isArray(value.clear_receipts) ||
       !value.clients || typeof value.clients !== 'object' || Array.isArray(value.clients)) {
     throw new Error('Redline state has an invalid schema; refusing to overwrite it');
   }
@@ -121,6 +124,16 @@ function validateState(value) {
         typeof client.created_at !== 'string' || !Number.isFinite(Date.parse(client.created_at)) ||
         (client.consent_version !== undefined && client.consent_version !== 1)) {
       throw new Error('Redline state has invalid browser client state; refusing to overwrite it');
+    }
+  }
+  for (const [operationId, receipt] of Object.entries(value.clear_receipts)) {
+    if (!OPERATION_ID_PATTERN.test(operationId) || !receipt || typeof receipt !== 'object' || Array.isArray(receipt) ||
+        Object.keys(receipt).sort().join(',') !== 'clear_generation,completed_at,expires_at,token_hash' ||
+        !Number.isSafeInteger(receipt.clear_generation) || receipt.clear_generation < 0 ||
+        typeof receipt.token_hash !== 'string' || !SECRET_HASH_PATTERN.test(receipt.token_hash) ||
+        !canonicalTimestamp(receipt.completed_at) || !canonicalTimestamp(receipt.expires_at) ||
+        Date.parse(receipt.expires_at) - Date.parse(receipt.completed_at) !== CLEAR_RECEIPT_TTL_MS) {
+      throw new Error('Redline state has invalid clear receipt state; refusing to overwrite it');
     }
   }
   if (!value.redlines || typeof value.redlines !== 'object' || Array.isArray(value.redlines) ||
@@ -857,6 +870,12 @@ class StateStore {
         changed = true;
       }
     }
+    for (const [operationId, receipt] of Object.entries(state.clear_receipts)) {
+      if (Date.parse(receipt.expires_at) <= this.now()) {
+        delete state.clear_receipts[operationId];
+        changed = true;
+      }
+    }
     return changed;
   }
 
@@ -882,6 +901,9 @@ class StateStore {
     if (value && value.version === 1 && value.redlines === undefined && value.operations === undefined &&
         value.legacy_migrated === undefined) {
       value = { ...value, version: STATE_VERSION, redlines: {}, operations: {}, legacy_migrated: false };
+    }
+    if (value && value.version === STATE_VERSION && value.clear_receipts === undefined) {
+      value = { ...value, clear_receipts: {} };
     }
     return validateState(value);
   }
@@ -941,7 +963,7 @@ class StateStore {
     });
   }
 
-  consumePairingSecret(secret, { consentVersion = 1 } = {}) {
+  consumePairingSecret(secret, { consentVersion = null } = {}) {
     return this._serialized(() => {
       if (consentVersion !== 1) return null;
       const state = this._read();
@@ -1303,11 +1325,32 @@ class StateStore {
     return this._serialized(() => this._read());
   }
 
-  clearAll({ browserToken = null } = {}) {
+  clearAll({ browserToken = null, operationId = null } = {}) {
     return this._serialized(() => {
       this._ensureContentDirectories();
       const state = this._read();
-      if (browserToken !== null) this._requireBrowserClientLocked(state, browserToken);
+      let clearReceipt = null;
+      if (browserToken !== null) {
+        if (typeof operationId !== 'string' || !OPERATION_ID_PATTERN.test(operationId)) {
+          throw new StateStoreError('invalid_request', 'browser clear operation ID is invalid');
+        }
+        const existing = state.clear_receipts[operationId];
+        if (existing) {
+          if (!verifySecret(browserToken, existing.token_hash)) {
+            throw new StateStoreError('unauthorized', 'browser client is not connected');
+          }
+          return existing.clear_generation;
+        }
+        this._requireBrowserClientLocked(state, browserToken);
+        const completedAtMs = this.now();
+        const completedAt = new Date(completedAtMs).toISOString();
+        clearReceipt = {
+          token_hash: hashSecret(browserToken),
+          clear_generation: state.clear_generation + 1,
+          completed_at: completedAt,
+          expires_at: new Date(completedAtMs + CLEAR_RECEIPT_TTL_MS).toISOString(),
+        };
+      }
       if (state.clear_generation >= Number.MAX_SAFE_INTEGER) throw new Error('clear generation is exhausted');
       const targetGeneration = state.clear_generation + 1;
       const intent = {
@@ -1325,6 +1368,10 @@ class StateStore {
         ...defaultState(),
         cli_hash: state.cli_hash,
         clear_generation: targetGeneration,
+        clear_receipts: {
+          ...state.clear_receipts,
+          ...(clearReceipt ? { [operationId]: clearReceipt } : {}),
+        },
         legacy_migrated: state.legacy_migrated,
       };
       this._write(cleared);

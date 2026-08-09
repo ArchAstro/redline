@@ -22,9 +22,11 @@ test('onboarding prominently discloses every data and retention boundary before 
   assert.match(disclosure, /optional screenshots/i);
   assert.match(disclosure, /local Redline sidecar/i);
   assert.match(disclosure, /Chrome[^<]*draft/i);
+  assert.match(disclosure, /Chrome[^<]*marker/i);
   assert.match(disclosure, /seven days/i);
   assert.match(disclosure, /delete individual feedback/i);
   assert.match(disclosure, /clear all local Redline data/i);
+  assert.match(disclosure, /content-free clear receipt[^<]*30 days/i);
   assert.match(disclosure, /no data or telemetry[^<]*ArchAstro/i);
   assert.match(disclosure, /configured coding-model provider/i);
   assert.match(disclosure, /type="checkbox"[^>]+id="consent"/);
@@ -52,7 +54,7 @@ function storageArea(initial = {}) {
   };
 }
 
-function stagedSecret(secret = 's'.repeat(43), expiresAt = '2026-08-07T19:10:00.000Z') {
+function stagedSecret(secret = 's'.repeat(43), expiresAt = '2099-08-07T19:10:00.000Z') {
   return { secret, expires_at: expiresAt };
 }
 
@@ -72,7 +74,7 @@ test('fragment discovery reads only session storage and never pairs before conse
         calls.push(['probe']);
         return {
           status: 'consent_required',
-          pairingExpiresAt: '2026-08-07T19:10:00.000Z',
+          pairingExpiresAt: '2099-08-07T19:10:00.000Z',
           packageVersion: '0.2.6',
           protocol: { major: 1, minor: 0 },
         };
@@ -84,7 +86,7 @@ test('fragment discovery reads only session storage and never pairs before conse
   assert.deepEqual(await controller.init(), { status: 'consent_required' });
   assert.deepEqual(calls, [
     ['probe'],
-    ['disclosure', { pairingExpiresAt: '2026-08-07T19:10:00.000Z' }],
+    ['disclosure', { pairingExpiresAt: '2099-08-07T19:10:00.000Z' }],
   ]);
   assert.deepEqual(sessionStorage.data, { redline_pairing_secret: stagedSecret(secret) });
   assert.deepEqual(sessionStorage.writes, []);
@@ -134,7 +136,7 @@ test('decline deletes the session secret and leaves pairing and content disabled
     },
     connectionClient: {
       async probeHealth() {
-        return { status: 'consent_required', pairingExpiresAt: '2026-08-07T19:10:00.000Z' };
+        return { status: 'consent_required', pairingExpiresAt: '2099-08-07T19:10:00.000Z' };
       },
       async pair() { calls.push(['pair']); throw new Error('must not pair'); },
     },
@@ -180,7 +182,7 @@ test('a late health response cannot reopen consent or polling after decline', as
   assert.deepEqual(await controller.decline(), { status: 'declined' });
   finishProbe({
     status: 'consent_required',
-    pairingExpiresAt: '2026-08-07T19:10:00.000Z',
+    pairingExpiresAt: '2099-08-07T19:10:00.000Z',
   });
   await initializing;
 
@@ -227,7 +229,7 @@ test('affirmative consent pairs once, consumes the session secret, and reveals s
     },
     connectionClient: {
       async probeHealth() {
-        return { status: 'consent_required', pairingExpiresAt: '2026-08-07T19:10:00.000Z' };
+        return { status: 'consent_required', pairingExpiresAt: '2099-08-07T19:10:00.000Z' };
       },
       async pair(value, options) {
         calls.push(['pair', value, structuredClone(options)]);
@@ -259,7 +261,7 @@ test('concurrent affirmative actions share one pairing attempt', async () => {
     view: { showDisclosure() {}, showConnected() {} },
     connectionClient: {
       async probeHealth() {
-        return { status: 'consent_required', pairingExpiresAt: '2026-08-07T19:10:00.000Z' };
+        return { status: 'consent_required', pairingExpiresAt: '2099-08-07T19:10:00.000Z' };
       },
       async pair() { pairCalls += 1; return pairResult; },
     },
@@ -275,6 +277,48 @@ test('concurrent affirmative actions share one pairing attempt', async () => {
   assert.deepEqual(sessionStorage.writes, [['remove', 'redline_pairing_secret']]);
 });
 
+test('a successful pairing invalidates a health poll that started before consent', async () => {
+  const { createOnboardingController } = require(ONBOARDING_PATH);
+  let visibilityListener;
+  let checks = 0;
+  let finishCheck;
+  const checkGate = new Promise((resolve) => { finishCheck = resolve; });
+  const calls = [];
+  const controller = createOnboardingController({
+    localStorage: storageArea(),
+    sessionStorage: storageArea({ redline_pairing_secret: stagedSecret() }),
+    view: {
+      showDisclosure() { calls.push('disclosure'); },
+      showConnected() { calls.push('connected'); },
+      showStatus() { calls.push('status'); },
+    },
+    connectionClient: {
+      async checkConnection() {
+        checks += 1;
+        if (checks > 1) await checkGate;
+        return { status: 'disconnected' };
+      },
+      async probeHealth() {
+        return { status: 'consent_required', pairingExpiresAt: '2099-08-07T19:10:00.000Z' };
+      },
+      async pair() { return { status: 'paired', connection: {} }; },
+    },
+    visibility: {
+      isVisible: () => true,
+      subscribe(listener) { visibilityListener = listener; return () => {}; },
+    },
+  });
+
+  assert.deepEqual(await controller.init(), { status: 'consent_required' });
+  calls.length = 0;
+  const refresh = visibilityListener();
+  await Promise.resolve();
+  assert.deepEqual(await controller.acceptConsent(true), { status: 'paired' });
+  finishCheck();
+  assert.equal(await refresh, undefined);
+  assert.deepEqual(calls, ['connected']);
+});
+
 test('successful consent stops onboarding health polling immediately', async () => {
   const { createOnboardingController } = require(ONBOARDING_PATH);
   const cleared = [];
@@ -284,7 +328,7 @@ test('successful consent stops onboarding health polling immediately', async () 
     view: { showDisclosure() {}, showConnected() {} },
     connectionClient: {
       async probeHealth() {
-        return { status: 'consent_required', pairingExpiresAt: '2026-08-07T19:10:00.000Z' };
+        return { status: 'consent_required', pairingExpiresAt: '2099-08-07T19:10:00.000Z' };
       },
       async pair() { return { status: 'paired', connection: {} }; },
     },
@@ -315,7 +359,7 @@ test('decline during pairing removes a late credential and keeps drafts disconne
     },
     connectionClient: {
       async probeHealth() {
-        return { status: 'consent_required', pairingExpiresAt: '2026-08-07T19:10:00.000Z' };
+        return { status: 'consent_required', pairingExpiresAt: '2099-08-07T19:10:00.000Z' };
       },
       async pair() {
         await pairGate;
@@ -354,7 +398,7 @@ test('decline race reports local cleanup failure only after the server capabilit
     },
     connectionClient: {
       async probeHealth() {
-        return { status: 'consent_required', pairingExpiresAt: '2026-08-07T19:10:00.000Z' };
+        return { status: 'consent_required', pairingExpiresAt: '2099-08-07T19:10:00.000Z' };
       },
       async pair() {
         await pairGate;
@@ -386,7 +430,7 @@ test('consent-time pairing expiry deletes the secret and stays disconnected', as
     },
     connectionClient: {
       async probeHealth() {
-        return { status: 'consent_required', pairingExpiresAt: '2026-08-07T19:10:00.000Z' };
+        return { status: 'consent_required', pairingExpiresAt: '2099-08-07T19:10:00.000Z' };
       },
       async pair() { return { status: 'pairing_expired' }; },
     },
@@ -417,7 +461,7 @@ test('recoverable connection errors preserve staged secret and existing drafts',
     },
     connectionClient: {
       async probeHealth() {
-        return { status: 'consent_required', pairingExpiresAt: '2026-08-07T19:10:00.000Z' };
+        return { status: 'consent_required', pairingExpiresAt: '2099-08-07T19:10:00.000Z' };
       },
       async pair() {
         return {
@@ -450,7 +494,7 @@ test('site enablement is blocked before consent and creates no draft after pairi
     siteEnabler: async () => { enabled += 1; return { origin: 'https://example.test/*' }; },
     connectionClient: {
       async probeHealth() {
-        return { status: 'consent_required', pairingExpiresAt: '2026-08-07T19:10:00.000Z' };
+        return { status: 'consent_required', pairingExpiresAt: '2099-08-07T19:10:00.000Z' };
       },
       async pair() { return { status: 'paired', connection: {} }; },
     },
@@ -546,10 +590,10 @@ test('visible polling stops after ten minutes and returns to setup guidance', as
 
 test('the setup polling deadline cannot expire an active replacement pairing window', async () => {
   const { createOnboardingController } = require(ONBOARDING_PATH);
-  let currentTime = Date.parse('2026-08-07T19:00:00.000Z');
+  let currentTime = Date.parse('2099-08-07T19:00:00.000Z');
   let poll;
   const sessionStorage = storageArea({
-    redline_pairing_secret: stagedSecret('s'.repeat(43), '2026-08-07T19:20:00.000Z'),
+    redline_pairing_secret: stagedSecret('s'.repeat(43), '2099-08-07T19:20:00.000Z'),
   });
   const declined = [];
   const controller = createOnboardingController({
@@ -563,7 +607,7 @@ test('the setup polling deadline cannot expire an active replacement pairing win
       async probeHealth() {
         return {
           status: 'consent_required',
-          pairingExpiresAt: '2026-08-07T19:20:00.000Z',
+          pairingExpiresAt: '2099-08-07T19:20:00.000Z',
         };
       },
     },
@@ -587,8 +631,8 @@ test('the setup polling deadline cannot expire an active replacement pairing win
 
 test('server-reported expiry deletes a staged secret while onboarding is hidden', async () => {
   const { createOnboardingController } = require(ONBOARDING_PATH);
-  const expiresAt = '2026-08-07T19:10:00.000Z';
-  let currentTime = Date.parse('2026-08-07T19:00:00.000Z');
+  const expiresAt = '2099-08-07T19:10:00.000Z';
+  let currentTime = Date.parse('2099-08-07T19:00:00.000Z');
   let visible = true;
   let visibilityListener;
   let expiryCallback;
@@ -644,4 +688,7 @@ test('extension-first onboarding exposes one exact copyable setup command and a 
   assert.equal(typeof bindOnboardingPage, 'function');
   assert.match(source, /navigator\.clipboard\.writeText\(SETUP_COMMAND\)/);
   assert.match(source, /connect\.disabled = !consent\.checked/);
+  assert.match(source, /cleanupStorage:\s*chrome\.storage\.local/);
+  assert.doesNotMatch(html, /id="enable-site"/);
+  assert.match(html, /Redline toolbar button/i);
 });

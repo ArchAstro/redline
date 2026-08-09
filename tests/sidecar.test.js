@@ -75,7 +75,7 @@ async function startSidecar(t, prepare) {
   const store = new StateStore(dir);
   const authToken = await store.ensureCliCredential();
   const pairing = await store.createPairingWindow();
-  const browser = await store.consumePairingSecret(pairing.secret);
+  const browser = await store.consumePairingSecret(pairing.secret, { consentVersion: 1 });
   adminTokens.set(port, authToken);
   if (prepare) prepare(dir);
   const child = spawn(process.execPath, ['runtime/server.js', ...launchArguments(dir)], {
@@ -317,13 +317,17 @@ test('browser clear revokes all profiles and rejects an old-generation draft aft
   };
   assert.equal((await request(port, 'POST', '/redlines', { origin, token: browserToken, body: oldDraft })).status, 201);
 
-  const cleared = await request(port, 'POST', '/clear', { origin, token: browserToken });
+  const clearBody = { operation_id: 'op_browser_clear_01234567' };
+  const cleared = await request(port, 'POST', '/clear', { origin, token: browserToken, body: clearBody });
   assert.equal(cleared.status, 200);
   assert.equal(cleared.json.clear_generation, 1);
+  const replay = await request(port, 'POST', '/clear', { origin, token: browserToken, body: clearBody });
+  assert.equal(replay.status, 200);
+  assert.deepEqual(replay.json, cleared.json);
   assert.equal((await request(port, 'GET', '/redlines', { origin, token: browserToken })).status, 401);
 
   const store = new StateStore(dir);
-  const replacement = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const replacement = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
   const retained = await request(port, 'POST', '/redlines', { origin, token: replacement.token, body: oldDraft });
   assert.equal(retained.status, 410);
   assert.equal(retained.json.error.code, 'data_cleared');
@@ -335,8 +339,12 @@ test('concurrent browser clears authorize and mutate atomically', async (t) => {
   const origin = `chrome-extension://${TEST_EXTENSION_ID}`;
 
   const results = await Promise.all([
-    request(port, 'POST', '/clear', { origin, token: browserToken }),
-    request(port, 'POST', '/clear', { origin, token: browserToken }),
+    request(port, 'POST', '/clear', {
+      origin, token: browserToken, body: { operation_id: 'op_concurrent_clear_first' },
+    }),
+    request(port, 'POST', '/clear', {
+      origin, token: browserToken, body: { operation_id: 'op_concurrent_clear_second' },
+    }),
   ]);
 
   assert.deepEqual(results.map((result) => result.status).sort(), [200, 401]);
@@ -459,10 +467,12 @@ test('production generation requires and revalidates the paired browser token', 
   assert.deepEqual(current.json, { clear_generation: 0 });
   assert.equal((await request(port, 'GET', '/generation', { origin, noAuth: true })).status, 401);
 
-  assert.equal((await request(port, 'POST', '/clear', { origin, token: browserToken })).status, 200);
+  assert.equal((await request(port, 'POST', '/clear', {
+    origin, token: browserToken, body: { operation_id: 'op_generation_clear_012345' },
+  })).status, 200);
   assert.equal((await request(port, 'GET', '/generation', { origin, token: browserToken })).status, 401);
   const store = new StateStore(dir);
-  const replacement = await store.consumePairingSecret((await store.createPairingWindow()).secret);
+  const replacement = await store.consumePairingSecret((await store.createPairingWindow()).secret, { consentVersion: 1 });
   const replaced = await request(port, 'GET', '/generation', { origin, token: replacement.token });
   assert.equal(replaced.status, 200, replaced.text);
   assert.deepEqual(replaced.json, { clear_generation: 1 });

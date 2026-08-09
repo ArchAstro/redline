@@ -39,6 +39,7 @@ function memoryStorage(initial = {}) {
     data,
     writes,
     async get(keys) {
+      if (keys === null) return structuredClone(data);
       const names = Array.isArray(keys) ? keys : [keys];
       return Object.fromEntries(names.filter((name) => Object.hasOwn(data, name))
         .map((name) => [name, structuredClone(data[name])]));
@@ -294,13 +295,15 @@ test('credential persistence failure revokes the minted capability and preserves
   assert.deepEqual(storage.data, { redline_draft_existing: { comment: 'preserve' } });
 });
 
-test('failed cleanup after persistence failure is explicit and retains an in-memory revocation handle', async () => {
+test('failed cleanup after persistence failure is explicit and retains a durable revocation handle', async () => {
   const { createConnectionClient } = require(CONNECTION_PATH);
   const storage = memoryStorage();
+  const cleanupStorage = memoryStorage();
   storage.set = async () => { throw new Error('storage unavailable'); };
   const client = createConnectionClient({
     now: () => Date.parse('2026-08-07T19:00:00.000Z'),
     storage,
+    cleanupStorage,
     fetch: async (url) => {
       if (url.endsWith('/health')) return response(health({
         pairing: { available: true, expires_at: '2026-08-07T19:10:00.000Z' },
@@ -318,7 +321,115 @@ test('failed cleanup after persistence failure is explicit and retains an in-mem
   const result = await client.pair('s'.repeat(43), { consent: true });
   assert.equal(result.status, 'pairing_cleanup_required');
   assert.equal(result.recoverable, false);
+  assert.equal(Object.values(cleanupStorage.data)[0].token, 't'.repeat(43));
   assert.equal(await client.revokePending(), false);
+});
+
+test('failed cleanup survives the onboarding page and a new client retries the revocation', async () => {
+  const { createConnectionClient } = require(CONNECTION_PATH);
+  const storage = memoryStorage();
+  const cleanupStorage = memoryStorage();
+  storage.set = async () => { throw new Error('storage unavailable'); };
+  let helperAvailable = false;
+  const fetch = async (url) => {
+    if (url.endsWith('/health')) return response(health({
+      pairing: { available: true, expires_at: '2026-08-07T19:10:00.000Z' },
+    }));
+    if (url.endsWith('/clients/current')) {
+      if (!helperAvailable) throw new TypeError('helper stopped');
+      return response(null, { status: 204 });
+    }
+    return response({
+      client_id: 'rlc_0123456789abcdef0123456789abcdef',
+      token: 't'.repeat(43),
+      clear_generation: 4,
+      consent_version: 1,
+    }, { status: 201 });
+  };
+  const first = createConnectionClient({
+    now: () => Date.parse('2026-08-07T19:00:00.000Z'),
+    storage,
+    cleanupStorage,
+    fetch,
+  });
+
+  assert.equal((await first.pair('s'.repeat(43), { consent: true })).status,
+    'pairing_cleanup_required');
+  assert.equal(Object.values(cleanupStorage.data)[0].token, 't'.repeat(43));
+
+  helperAvailable = true;
+  const reopened = createConnectionClient({ storage, cleanupStorage, fetch });
+  assert.equal(await reopened.revokePending(), true);
+  assert.deepEqual(cleanupStorage.data, {});
+});
+
+test('pairing fails closed when a minted credential cannot be durably queued for cleanup', async () => {
+  const { createConnectionClient } = require(CONNECTION_PATH);
+  const storage = memoryStorage();
+  const cleanupStorage = memoryStorage();
+  storage.set = async () => { throw new Error('connection storage unavailable'); };
+  cleanupStorage.set = async () => { throw new Error('cleanup storage unavailable'); };
+  let revocations = 0;
+  const client = createConnectionClient({
+    now: () => Date.parse('2026-08-07T19:00:00.000Z'),
+    storage,
+    cleanupStorage,
+    fetch: async (url) => {
+      if (url.endsWith('/health')) return response(health({
+        pairing: { available: true, expires_at: '2026-08-07T19:10:00.000Z' },
+      }));
+      if (url.endsWith('/clients/current')) {
+        revocations += 1;
+        throw new TypeError('helper stopped');
+      }
+      return response({
+        client_id: 'rlc_0123456789abcdef0123456789abcdef',
+        token: 't'.repeat(43),
+        clear_generation: 4,
+        consent_version: 1,
+      }, { status: 201 });
+    },
+  });
+
+  const result = await client.pair('s'.repeat(43), { consent: true });
+
+  assert.equal(result.status, 'pairing_cleanup_persistence_failed');
+  assert.equal(result.recoverable, false);
+  assert.equal(revocations, 1);
+  assert.deepEqual(cleanupStorage.data, {});
+});
+
+test('malformed successful pairing response revokes a minted credential before failing', async () => {
+  const { SETUP_COMMAND, createConnectionClient } = require(CONNECTION_PATH);
+  const storage = memoryStorage();
+  const cleanupStorage = memoryStorage();
+  const requests = [];
+  const client = createConnectionClient({
+    now: () => Date.parse('2026-08-07T19:00:00.000Z'),
+    storage,
+    cleanupStorage,
+    fetch: async (url, options) => {
+      requests.push([url, options]);
+      if (url.endsWith('/health')) return response(health({
+        pairing: { available: true, expires_at: '2026-08-07T19:10:00.000Z' },
+      }));
+      if (url.endsWith('/clients/current')) return response(null, { status: 204 });
+      return response({
+        client_id: 'rlc_0123456789abcdef0123456789abcdef',
+        token: 't'.repeat(43),
+        clear_generation: 4,
+        consent_version: 1,
+        unexpected: true,
+      }, { status: 201 });
+    },
+  });
+
+  assert.deepEqual(await client.pair('s'.repeat(43), { consent: true }), {
+    status: 'pairing_failed', recoverable: true, command: SETUP_COMMAND,
+  });
+  assert.equal(requests.filter(([url]) => url.endsWith('/clients/current')).length, 1);
+  assert.deepEqual(storage.data, {});
+  assert.deepEqual(cleanupStorage.data, {});
 });
 
 test('pairing expiry after consent returns typed repair state without credential writes', async () => {
@@ -425,7 +536,7 @@ test('packaged fragment reader clears the exact top-frame connect URL before one
     URL,
     URLSearchParams,
     window,
-    location: { href: `http://127.0.0.1:7878/connect#pair=${'s'.repeat(43)}` },
+    location: { href: `http://127.0.0.1:7878/connect#pair=${'s'.repeat(43)}&expires_at=2026-08-07T19%3A10%3A00.000Z` },
     history: {
       replaceState(state, title, url) { events.push(['replace', state, title, url]); },
     },
@@ -446,6 +557,7 @@ test('packaged fragment reader clears the exact top-frame connect URL before one
       type: 'redline-stage-pairing-secret',
       source: 'redline-connect-v1',
       secret: 's'.repeat(43),
+      expires_at: '2026-08-07T19:10:00.000Z',
     }],
   ]);
 });
@@ -498,7 +610,7 @@ function fragmentBackground(localInitial = {}, devConfig, { failInjection = fals
     setTimeout,
     clearTimeout,
     REDLINE_CONFIG: devConfig,
-    importScripts() { context.REDLINE_CONFIG = { port: 7878, token: 'unused' }; },
+    importScripts() {},
     chrome: {
       storage: { local, session },
       alarms: {
@@ -512,7 +624,7 @@ function fragmentBackground(localInitial = {}, devConfig, { failInjection = fals
           installEvents.push(['query', structuredClone(query)]);
           return [{
             id: 17,
-            url: `http://127.0.0.1:7878/connect#pair=${'s'.repeat(43)}`,
+            url: `http://127.0.0.1:7878/connect#pair=${'s'.repeat(43)}&expires_at=2026-08-07T19%3A10%3A00.000Z`,
           }];
         },
         async create(details) { installEvents.push(['create', structuredClone(details)]); },
@@ -533,6 +645,7 @@ function fragmentBackground(localInitial = {}, devConfig, { failInjection = fals
       },
     },
   };
+  context.RedlineRevocations = require('../extension/revocations');
   vm.runInNewContext(fs.readFileSync(BACKGROUND_PATH, 'utf8'), context);
   return {
     session,
@@ -588,7 +701,10 @@ test('background fails closed when trusted-context storage APIs are unavailable'
 test('background stages a fragment secret only from the exact packaged top-frame sender', async () => {
   const background = fragmentBackground();
   const secret = 's'.repeat(43);
-  const message = { type: 'redline-stage-pairing-secret', source: 'redline-connect-v1', secret };
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const message = {
+    type: 'redline-stage-pairing-secret', source: 'redline-connect-v1', secret, expires_at: expiresAt,
+  };
   const sender = {
     id: background.runtimeId,
     frameId: 0,
@@ -598,8 +714,7 @@ test('background stages a fragment secret only from the exact packaged top-frame
 
   assert.deepEqual(await background.send(message, sender), { ok: true, status: 'staged' });
   assert.equal(background.session.data.redline_pairing_secret.secret, secret);
-  assert.match(background.session.data.redline_pairing_secret.expires_at,
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  assert.equal(background.session.data.redline_pairing_secret.expires_at, expiresAt);
   assert.deepEqual(background.alarms.at(-1), [
     'create', 'redline-pairing-secret-expiry',
     { when: Date.parse(background.session.data.redline_pairing_secret.expires_at) },

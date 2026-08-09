@@ -14,7 +14,8 @@ const { loadExtensionIdentity } = require('../runtime/lib/extension-identity');
 const { findInstalledExtension } = require('../setup/chrome-profile-discovery');
 const { StateStore } = require('../runtime/lib/state-store');
 
-const STORE_ID = 'hfjngaflcmkocibdgpeanmhjlkofibca';
+const STORE_IDENTITY = require('../config/extension-identity.json');
+const STORE_ID = STORE_IDENTITY.extension_id;
 
 function runStatus(home, envOverrides = {}) {
   return spawnSync(process.execPath, [SETUP, '--extension-status'], {
@@ -71,7 +72,7 @@ test('Store identity requires an exact non-placeholder Chrome ID', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-identity-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'identity.json');
-  fs.writeFileSync(file, JSON.stringify({ extension_id: STORE_ID, web_store_url: 'https://chromewebstore.google.com/detail/redline/' + STORE_ID }));
+  fs.writeFileSync(file, JSON.stringify(STORE_IDENTITY));
   assert.equal(loadExtensionIdentity(file).extensionId, STORE_ID);
   for (const id of ['a'.repeat(32), 'abcdefghijklmnop', 'ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP', 'abcdefghijklmnopabcdefghijklmnop']) {
     fs.writeFileSync(file, JSON.stringify({ extension_id: id, web_store_url: 'https://chromewebstore.google.com/detail/redline/' + id }));
@@ -234,7 +235,7 @@ test('store setup starts helper before opening a direct fragment and Store listi
   });
 
   assert.equal(events[0], 'helper');
-  assert.match(events[1], /^http:\/\/127\.0\.0\.1:7878\/connect#pair=[A-Za-z0-9_-]{43}$/);
+  assert.match(events[1], /^http:\/\/127\.0\.0\.1:7878\/connect#pair=[A-Za-z0-9_-]{43}&expires_at=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}\.\d{3}Z$/);
   assert.equal(events[2], 'https://chromewebstore.example/redline');
   assert.equal(events[1].includes('%23'), false);
   assert.equal(output.includes(events[1].split('pair=')[1]), false);
@@ -360,9 +361,9 @@ test('Linux setup awaits the portal and creates a usable pairing window', async 
   assert.equal(setupSettled, false);
   releasePortal();
   await setup;
-  const secret = new URL(portalUrl).hash.slice('#pair='.length);
+  const secret = new URLSearchParams(new URL(portalUrl).hash.slice(1)).get('pair');
   assert.match(secret, /^[A-Za-z0-9_-]{43}$/);
-  assert.ok(await store.consumePairingSecret(secret));
+  assert.ok(await store.consumePairingSecret(secret, { consentVersion: 1 }));
 });
 
 test('Linux portal connect failure invalidates pairing without leaking its secret', async (t) => {
@@ -455,7 +456,13 @@ test('CLI reports a missing Store identity without a stack trace or creating use
   try {
     const result = spawnSync(process.execPath, [SETUP], {
       cwd: ROOT,
-      env: { ...process.env, HOME: home, REDLINE_DIR: path.join(home, '.redline') },
+      env: {
+        ...process.env,
+        HOME: home,
+        REDLINE_DIR: path.join(home, '.redline'),
+        REDLINE_TEST_MODE: '1',
+        REDLINE_IDENTITY_PATH: path.join(home, 'missing-extension-identity.json'),
+      },
       encoding: 'utf8',
     });
     assert.equal(result.status, 1);

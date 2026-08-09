@@ -16,7 +16,8 @@ const EXTENSION_ID = 'hfjngaflcmkocibdgpeanmhjlkofibca';
 const ORIGIN = `chrome-extension://${EXTENSION_ID}`;
 const INSTANCE_ID = 'rli_0123456789abcdef0123456789abcdef';
 const LAUNCH_ID = 'rll_fedcba9876543210fedcba9876543210';
-const STORE_ID = 'hfjngaflcmkocibdgpeanmhjlkofibca';
+const STORE_IDENTITY = require('../config/extension-identity.json');
+const STORE_ID = STORE_IDENTITY.extension_id;
 
 async function freePort() {
   return new Promise((resolve, reject) => {
@@ -129,10 +130,7 @@ async function startStoreMode(t) {
   const listenPort = await freePort();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-store-http-'));
   const identityPath = path.join(dir, 'extension-identity.json');
-  fs.writeFileSync(identityPath, JSON.stringify({
-    extension_id: STORE_ID,
-    web_store_url: `https://chromewebstore.google.com/detail/redline/${STORE_ID}`,
-  }), { mode: 0o600 });
+  fs.writeFileSync(identityPath, JSON.stringify(STORE_IDENTITY), { mode: 0o600 });
   const store = new StateStore(dir);
   const cliToken = await store.ensureCliCredential();
   const child = spawn(process.execPath, ['runtime/server.js', ...launchArguments(dir)], {
