@@ -1,5 +1,14 @@
 # @archastro/redline
 
+## 0.3.0
+
+### Minor Changes
+
+- 77fc36c: Replace the duplicated Claude and Codex plugins with one portable agent skill that users install, update, and remove directly through the standard `skills` CLI. Redline's CLI no longer manages agent skill or plugin state.
+- 26f3a91: Install and pair the Chrome Web Store extension through a short-lived local
+  consent flow. Keep unpacked extension setup available for contributors, update
+  public docs and CLI guidance, and align extension branding.
+
 ## 0.2.6
 
 ### Patch Changes
