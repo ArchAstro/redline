@@ -12,7 +12,7 @@ function readJson(root, relativePath) {
   return JSON.parse(fs.readFileSync(path.join(root, relativePath), 'utf8'));
 }
 
-test('release version command synchronizes every public manifest', () => {
+test('release version command synchronizes every public version file', () => {
   const packageJson = readJson(ROOT, 'package.json');
   assert.equal(packageJson.scripts.version, 'npx changeset version && node setup/sync-versions.js');
   assert.equal(packageJson.scripts['check:versions'], 'node setup/sync-versions.js --check');
@@ -21,6 +21,7 @@ test('release version command synchronizes every public manifest', () => {
   try {
     for (const relativePath of [
       'package.json',
+      'package-lock.json',
       'extension/manifest.json',
       'extension/manifest.dev.json',
     ]) {
@@ -34,6 +35,8 @@ test('release version command synchronizes every public manifest', () => {
 
     const result = spawnSync(process.execPath, [SYNC, '--root', temp], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(readJson(temp, 'package-lock.json').version, '9.8.7');
+    assert.equal(readJson(temp, 'package-lock.json').packages[''].version, '9.8.7');
     assert.equal(readJson(temp, 'extension/manifest.json').version, '9.8.7');
     assert.equal(readJson(temp, 'extension/manifest.dev.json').version, '9.8.7');
   } finally {

@@ -25,6 +25,10 @@ function writeJson(root, relativePath, value) {
 function synchronizeVersions(root, check) {
   const version = readJson(root, 'package.json').version;
   const targets = [
+    ['package-lock.json', (value) => {
+      value.version = version;
+      value.packages[''].version = version;
+    }],
     ['extension/manifest.json', (value) => { value.version = version; }],
     ['extension/manifest.dev.json', (value) => { value.version = version; }],
   ];
@@ -46,7 +50,7 @@ function synchronizeVersions(root, check) {
 try {
   const { root, check } = parseArgs(process.argv);
   const changed = synchronizeVersions(root, check);
-  if (!check && changed.length) process.stdout.write(`Synchronized ${changed.length} manifests.\n`);
+  if (!check && changed.length) process.stdout.write(`Synchronized ${changed.length} version files.\n`);
 } catch (error) {
   process.stderr.write(`error: ${error.message}\n`);
   process.exitCode = 1;
