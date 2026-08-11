@@ -1,5 +1,13 @@
 # @archastro/redline
 
+## 0.3.1
+
+### Patch Changes
+
+- 8e00a21: Update the public setup flow for the live Chrome Web Store and default npm
+  registry, and close the local pairing bridge automatically so Chrome-first
+  onboarding continues in its original tab.
+
 ## 0.3.0
 
 ### Minor Changes

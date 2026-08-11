@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Redline",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Turn precise webpage feedback into actionable coding-agent input.",
   "icons": {
     "128": "icon-128.png"
