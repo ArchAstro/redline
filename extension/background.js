@@ -212,6 +212,10 @@ function validConnectSender(msg, sender) {
     exactConnectUrl(sender.url) && exactConnectUrl(sender.tab.url);
 }
 
+async function returnToOnboarding(connectTabId) {
+  await chrome.tabs.remove(connectTabId);
+}
+
 class RedlineExtensionError extends Error {
   constructor(code, message) {
     super(message);
@@ -988,6 +992,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           });
           await chrome.alarms.create(PAIRING_SECRET_ALARM, { when: Date.parse(msg.expires_at) });
         });
+        try {
+          await returnToOnboarding(sender.tab.id);
+        } catch {
+          // Pairing is staged even if the bridge tab closes during handoff.
+        }
         sendResponse({ ok: true, status: 'staged' });
         return;
       }

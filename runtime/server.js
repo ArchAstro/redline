@@ -254,7 +254,7 @@ async function requestIsAuthorized(req) {
   return null;
 }
 
-const CONNECT_HTML = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect Redline</title><body><main><h1>Connect Redline</h1><p>Open the Redline extension to review the local-data disclosure and finish connecting this Chrome profile.</p></main></body></html>';
+const CONNECT_HTML = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect Redline</title><body><main><h1>Connecting to Redline</h1><p>This secure handoff tab closes automatically. Continue in the Redline setup tab.</p></main></body></html>';
 
 const server = http.createServer(async (req, res) => {
   if (duplicateSecurityHeader(req)) {

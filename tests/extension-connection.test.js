@@ -584,7 +584,9 @@ test('packaged fragment reader rejects nonliteral pairing fragment spellings', (
   }
 });
 
-function fragmentBackground(localInitial = {}, devConfig, { failInjection = false, omitAccessApis = false } = {}) {
+function fragmentBackground(localInitial = {}, devConfig, {
+  failInjection = false, omitAccessApis = false,
+} = {}) {
   const session = memoryStorage();
   const local = memoryStorage(localInitial);
   const storageAccess = [];
@@ -628,6 +630,7 @@ function fragmentBackground(localInitial = {}, devConfig, { failInjection = fals
           }];
         },
         async create(details) { installEvents.push(['create', structuredClone(details)]); },
+        async remove(tabId) { installEvents.push(['remove', tabId]); },
         onUpdated: { addListener() {} },
         onRemoved: { addListener() {} },
       },
@@ -718,6 +721,9 @@ test('background stages a fragment secret only from the exact packaged top-frame
   assert.deepEqual(background.alarms.at(-1), [
     'create', 'redline-pairing-secret-expiry',
     { when: Date.parse(background.session.data.redline_pairing_secret.expires_at) },
+  ]);
+  assert.deepEqual(background.installEvents, [
+    ['remove', 17],
   ]);
 
   const rejected = [

@@ -10,9 +10,6 @@ Redline combines a Chrome extension, a local helper, and an open agent skill.
 Select text on a page, leave the requested change in context, and ask your
 agent to pull it. Built by [ArchAstro](https://archastro.ai).
 
-> The Chrome Web Store submission is under review. npm 0.2.x uses the unpacked
-> extension workflow below; npm 0.3 and newer use Chrome Web Store pairing.
-
 ```
 [ Chrome extension ]  --local-->  [ Helper @ 127.0.0.1:7878 ]  --local-->  [ Coding agent ]
   select + comment                   private local state                    pull + act
@@ -34,44 +31,23 @@ Prerequisites: macOS or Linux, Node.js 18 or newer, Bash, curl, and jq, plus
 Chrome or another Chromium-based browser. Windows and Safari are not currently
 supported.
 
-### npm 0.2.x
+1. [Install Redline from the Chrome Web Store](https://chromewebstore.google.com/detail/redline/bbllmeihbcmemadgmongicpklkjjgoaf).
+2. Install the CLI and portable agent skill:
 
-npm 0.2.x installs an unpacked extension:
+   ```bash
+   npm install -g @archastro/redline
+   npx skills add ArchAstro/redline
+   ```
 
-```bash
-npm install -g @archastro/redline --registry=https://registry.npmjs.org
-redline setup --with-screenshots
-redline start
-```
+3. Start the local helper and pair the extension:
 
-Then open `chrome://extensions`, enable **Developer mode**, choose
-**Load unpacked**, and select `~/.redline/extension`.
+   ```bash
+   redline setup
+   ```
 
-`--with-screenshots` enables Redline on normal HTTP/HTTPS pages and allows
-optional visible-page screenshots. Use `redline setup --local-only` for the
-lowest-permission localhost workflow.
-
-npm 0.2.x setup also installs or updates legacy Claude and Codex plugin state.
-npm 0.3 removes that side effect and replaces those plugins with the portable
-skill below.
-
-### npm 0.3+ and the Chrome Web Store
-
-The Store listing is pending review:
-
-[Install Redline from the Chrome Web Store](https://chromewebstore.google.com/detail/redline/bbllmeihbcmemadgmongicpklkjjgoaf)
-
-Once the listing is available, install the extension and run:
-
-```bash
-npm install -g @archastro/redline --registry=https://registry.npmjs.org
-npx skills add ArchAstro/redline
-redline setup
-```
-
-The standard skills CLI owns skill installation and updates in npm 0.3+.
-Redline's 0.3+ CLI never installs, updates, removes, or inspects agent skills
-or legacy plugin state.
+The standard skills CLI owns skill installation and updates. Redline's CLI
+never installs, updates, removes, or inspects agent skills or legacy plugin
+state.
 
 `redline setup` starts the local helper and opens a short-lived consent page.
 Approve it to pair the extension with the local helper. No ArchAstro account
@@ -137,12 +113,8 @@ browser data.
 For a one-off setup without a global install:
 
 ```bash
-npx --yes --@archastro:registry=https://registry.npmjs.org \
-  --package @archastro/redline redline setup
+npx --yes --package @archastro/redline redline setup
 ```
-
-The explicit npm registry keeps setup working on machines that map the
-`@archastro` scope to a private package registry.
 
 ## Local-first data model
 
