@@ -2,7 +2,7 @@
   'use strict';
 
   const SECRET_KEY = 'redline_pairing_secret';
-  const SETUP_COMMAND = 'npx --yes @archastro/redline setup';
+  const SETUP_COMMAND = 'npx --yes --package @archastro/redline redline setup';
 
   function createOnboardingController({
     connectionClient, localStorage, sessionStorage, view, siteEnabler = null,
@@ -256,7 +256,7 @@
         disclosure.hidden = true;
         siteStep.hidden = true;
         declinedStep.hidden = true;
-        status.textContent = 'Run the setup command, then keep this page open.';
+        status.textContent = 'Run this once in Terminal. This page will continue automatically.';
       },
       showStatus(state) {
         const messages = {

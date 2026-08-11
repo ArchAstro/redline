@@ -136,7 +136,7 @@ test('README documents the portable skill and terminal invocation', () => {
   assert.match(read('skills/redline/SKILL.md'), /^name:\s*redline$/m);
 });
 
-test('public launch guidance distinguishes the current release from Store pairing', () => {
+test('public launch guidance uses the live Store pairing flow', () => {
   const readme = read('README.md');
   const security = read('SECURITY.md');
   const contributing = read('CONTRIBUTING.md');
@@ -145,12 +145,14 @@ test('public launch guidance distinguishes the current release from Store pairin
     encoding: 'utf8',
   });
 
-  assert.match(readme, /Chrome Web Store[^.]*under review/i);
-  assert.match(readme, /npm 0\.2\.x[^.]*unpacked extension/i);
-  assert.match(readme, /npm 0\.3[^.]*Chrome Web Store/i);
-  assert.match(readme, /0\.2\.x[^.]*Claude and Codex plugin state/i);
   assert.match(readme, /https:\/\/chromewebstore\.google\.com\/detail\/redline\/bbllmeihbcmemadgmongicpklkjjgoaf/);
+  assert.match(readme, /npm install -g @archastro\/redline/);
+  assert.match(readme, /npx skills add ArchAstro\/redline/);
+  assert.match(readme, /redline setup/);
   assert.match(readme, /pair[^.]*local helper/i);
+  assert.doesNotMatch(readme, /under review|pending review/i);
+  assert.doesNotMatch(readme, /npm 0\.2\.x/i);
+  assert.doesNotMatch(readme, /--registry|@archastro:registry/i);
   assert.doesNotMatch(readme, /command-line tools without an `Origin` header can access the sidecar locally/i);
   assert.match(security, /CLI credential/i);
   assert.match(security, /paired-browser credential/i);

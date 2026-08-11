@@ -681,9 +681,9 @@ test('extension-first onboarding exposes one exact copyable setup command and a 
   const source = fs.readFileSync(ONBOARDING_PATH, 'utf8');
   const { SETUP_COMMAND, bindOnboardingPage } = require(ONBOARDING_PATH);
 
-  assert.equal(SETUP_COMMAND, 'npx --yes @archastro/redline setup');
+  assert.equal(SETUP_COMMAND, 'npx --yes --package @archastro/redline redline setup');
   assert.equal(html.split(SETUP_COMMAND).length - 1, 1);
-  assert.match(html, /<code>npx --yes @archastro\/redline setup<\/code>/);
+  assert.match(html, /<code>npx --yes --package @archastro\/redline redline setup<\/code>/);
   assert.match(html, /id="copy-command"[^>]+title="Copy setup command"/);
   assert.equal(typeof bindOnboardingPage, 'function');
   assert.match(source, /navigator\.clipboard\.writeText\(SETUP_COMMAND\)/);

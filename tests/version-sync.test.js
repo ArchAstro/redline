@@ -46,8 +46,10 @@ test('CI uses a Node release that provides the built-in SQLite test runtime', ()
   assert.match(workflow, /node-version:\s*['"]24['"]/);
 });
 
-test('package lock root exposes the exact public binary map', () => {
+test('package lock root matches the public package identity', () => {
   const packageJson = readJson(ROOT, 'package.json');
   const packageLock = readJson(ROOT, 'package-lock.json');
+  assert.equal(packageLock.version, packageJson.version);
+  assert.equal(packageLock.packages?.['']?.version, packageJson.version);
   assert.deepEqual(packageLock.packages?.['']?.bin, packageJson.bin);
 });
