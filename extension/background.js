@@ -4,6 +4,7 @@ const DEV_CONFIG = globalThis.REDLINE_CONFIG;
 const PORT = DEV_CONFIG?.port ?? 7878;
 const BASE = `http://127.0.0.1:${PORT}`;
 const DEV_MODE = PORT !== 7878;
+const POPUP_PROTOCOL_VERSION = 1;
 const CONNECTION_KEY = 'redline_connection';
 const SIDECAR_REQUEST_TIMEOUT_MS = 3000;
 const OPERATION_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
@@ -1173,11 +1174,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         try {
           const connection = await connectionState();
           await currentClearGeneration(connection.headers);
-          sendResponse({ ok: true, connected: true });
+          sendResponse({ ok: true, connected: true, protocol_version: POPUP_PROTOCOL_VERSION });
         } catch (error) {
           sendResponse({
             ok: true,
             connected: false,
+            protocol_version: POPUP_PROTOCOL_VERSION,
             error_code: error.code || 'helper_unavailable',
             message: error.message,
           });

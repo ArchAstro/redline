@@ -18,8 +18,9 @@
         <div id="origin" class="origin">No website open</div>
         <p id="site-message" class="message" role="status"></p>
         <div class="site-actions">
-          <button id="enable-site" class="primary">Enable Redline on this site</button>
-          <button id="disable-site" class="secondary" hidden>Disable on this site</button>
+          <button id="enable-site" class="primary" data-worker-control disabled>Enable Redline on this site</button>
+          <button id="disable-site" class="secondary" data-worker-control disabled hidden>Disable on this site</button>
+          <button id="restart-extension" class="primary" hidden>Restart Redline</button>
         </div>
       </section>
 
@@ -30,7 +31,7 @@
             <p>Attach a visible-tab screenshot to new feedback. This asks Chrome for access to all websites; Redline captures only an enabled site's active tab when you submit. After turning it off, you may need to enable sites again.</p>
           </div>
           <label class="switch" aria-label="Full visual context">
-            <input id="full-visual" type="checkbox">
+            <input id="full-visual" type="checkbox" data-worker-control disabled>
             <span aria-hidden="true"></span>
           </label>
         </div>
@@ -42,20 +43,20 @@
             <div class="section-label" id="feedback-title">Feedback</div>
             <div id="counts" class="counts"></div>
           </div>
-          <button id="refreshShot" class="quiet" title="Use a fresh screenshot on the next submission">Refresh shot</button>
+          <button id="refreshShot" class="quiet" data-worker-control disabled title="Use a fresh screenshot on the next submission">Refresh shot</button>
         </div>
         <div class="filters" aria-label="Feedback filter">
-          <button data-filter="pending" class="active">Pending</button>
-          <button data-filter="all">All</button>
+          <button data-filter="pending" data-worker-control class="active" disabled>Pending</button>
+          <button data-filter="all" data-worker-control disabled>All</button>
         </div>
         <div id="list" class="list"></div>
       </section>
     </main>
 
     <footer>
-      <button id="disconnect" class="quiet">Disconnect browser</button>
-      <button id="disable-everywhere" class="quiet">Disable everywhere</button>
-      <button id="clear-data" class="danger">Clear all data</button>
+      <button id="disconnect" class="quiet" data-worker-control disabled>Disconnect browser</button>
+      <button id="disable-everywhere" class="quiet" data-worker-control disabled>Disable everywhere</button>
+      <button id="clear-data" class="danger" data-worker-control disabled>Clear all data</button>
     </footer>
 
     <script src="popup.js"></script>

@@ -22,6 +22,7 @@
     "docs/assets/"
   ],
   "scripts": {
+    "dev": "vite demo --host 127.0.0.1",
     "build:chrome-bootstrap": "node scripts/build-bootstrap-extension.js",
     "build:chrome-store": "node scripts/build-store-extension.js",
     "check:chrome-store": "node scripts/validate-store-extension.js && node scripts/build-store-extension.js",
@@ -32,7 +33,8 @@
     "version": "npx changeset version && node setup/sync-versions.js"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.29.8"
+    "@changesets/cli": "^2.29.8",
+    "vite": "^5.4.21"
   },
   "overrides": {
     "js-yaml": "^4.3.1",

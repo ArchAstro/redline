@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#17130f" />
+    <meta name="description" content="Redline turns precise webpage feedback into changes your coding agent can make." />
+    <title>Redline — Feedback, written where it belongs</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,500&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <div class="candlelight" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="wordmark" href="#top" aria-label="Redline home">
+        <svg viewBox="0 0 34 34" aria-hidden="true"><path d="M7 25.4c5.7-2.2 11.6-8.2 16.8-18.2M11 27c4.4-1.1 9-1 14 .4"/><path class="mark-accent" d="M21.4 8.7c1.8-.2 4.2.4 5.5 1.8"/></svg>
+        <span>Redline</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#how">How it works</a>
+        <a href="#local">Local first</a>
+      </nav>
+      <a class="header-install" href="https://chromewebstore.google.com/detail/redline/bbllmeihbcmemadgmongicpklkjjgoaf">Add to Chrome <span aria-hidden="true">↗</span></a>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy load-in">
+          <p class="eyebrow">A margin for the modern web</p>
+          <h1 id="hero-title">Leave the change<br /><em>where you see it.</em></h1>
+          <p class="hero-intro">Highlight live UI. Write what should change. Redline carries the exact context to your coding agent—without turning your thought into a ticket.</p>
+          <a class="primary-cta" href="https://chromewebstore.google.com/detail/redline/bbllmeihbcmemadgmongicpklkjjgoaf">
+            <span>Install Redline</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 7l5 5-5 5"/></svg>
+          </a>
+          <p class="hero-note">Chrome · macOS & Linux · no account required</p>
+        </div>
+
+        <div class="hero-stage load-in" data-demo-state="select" aria-label="Animated demonstration of leaving a Redline comment">
+          <div class="wax-seal" aria-hidden="true"><span>R</span></div>
+          <div class="browser-frame">
+            <div class="browser-bar">
+              <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+              <div class="address">localhost:5173 / pricing</div>
+              <span class="redline-dot">R</span>
+            </div>
+            <div class="sample-page">
+              <div class="sample-nav"><span>Arc & Loom</span><div></div><div></div></div>
+              <p class="sample-kicker">A quieter way to build</p>
+              <h2>Plans for work<br />that <span class="target-copy">moves fast.</span></h2>
+              <p class="sample-body">Bring your team together around the work that matters.</p>
+              <button type="button">Start building</button>
+              <svg class="annotation-stroke" viewBox="0 0 310 72" aria-hidden="true">
+                <path d="M8 45c58-7 103-8 164-4 48 3 91 8 130 2" />
+                <path d="M232 56c25 2 48-2 66-10" />
+              </svg>
+              <div class="selection-tag">Redline</div>
+            </div>
+            <div class="comment-card">
+              <div class="comment-head"><span class="comment-mark">R</span><span>Leave a redline</span><kbd>⌘ ↵</kbd></div>
+              <p class="typed-comment">Make this feel less hurried. Try “moves with intention.”</p>
+              <div class="comment-footer"><span>Exact text + page context</span><button type="button">Send</button></div>
+            </div>
+            <div class="sent-flash"><span>✓</span> Redline sent to your agent</div>
+          </div>
+          <div class="quill" aria-hidden="true">
+            <svg viewBox="0 0 88 240"><path class="feather" d="M75 4C40 17 13 57 9 112c-2 25 4 49 14 62 14-32 35-63 52-91-13 31-31 64-46 94l11 5c24-44 44-87 48-130 2-21-3-38-13-48Z"/><path class="shaft" d="M76 10C62 65 45 116 24 172L7 232"/><path class="barb" d="M19 118 61 82M18 141l35-25M30 72l32-28M25 96l43-35"/></svg>
+          </div>
+          <div class="stage-caption"><span class="caption-step">Live page</span><span class="caption-rule"></span><span class="caption-action">Select. Write. Send.</span></div>
+          <button class="replay" type="button" aria-label="Replay hero animation"><span aria-hidden="true">↻</span> Replay</button>
+        </div>
+      </section>
+
+      <section class="manifesto reveal" aria-label="Product statement">
+        <p>Great work has always begun in the margin.</p>
+        <h2>Redline keeps feedback close to the thing itself—then gives your agent enough context to act.</h2>
+      </section>
+
+      <section class="workflow" id="how" aria-labelledby="workflow-title">
+        <div class="section-heading reveal">
+          <p class="eyebrow">One continuous gesture</p>
+          <h2 id="workflow-title">From seeing<br />to shipping.</h2>
+        </div>
+
+        <div class="workflow-line" aria-hidden="true"><span></span></div>
+
+        <article class="workflow-step capture-step reveal">
+          <div class="step-number">I</div>
+          <div class="step-copy">
+            <p class="step-kicker">In the browser</p>
+            <h3>Mark the exact words.</h3>
+            <p>Select text on any live page and leave a concrete request. Redline records the page, nearby copy, and the precise selection.</p>
+          </div>
+          <div class="margin-note">
+            <span class="selected-phrase">Ship faster today</span>
+            <svg viewBox="0 0 220 30" aria-hidden="true"><path d="M3 20c57-6 122-7 213-2"/></svg>
+            <blockquote>Too generic. Name the outcome.</blockquote>
+          </div>
+        </article>
+
+        <article class="workflow-step agent-step reveal">
+          <div class="step-number">II</div>
+          <div class="step-copy">
+            <p class="step-kicker">In your agent</p>
+            <h3>Say four words.</h3>
+            <p>Redline’s open skill works with Codex, Claude Code, and any agent that supports portable skills.</p>
+          </div>
+          <div class="agent-console" aria-label="Example terminal session">
+            <div class="console-top"><span>agent</span><span>local session</span></div>
+            <p><span class="prompt">›</span> Pull my redlines.</p>
+            <div class="console-rule"></div>
+            <p class="console-muted">Found 1 pending redline</p>
+            <p class="console-result"><span>✓</span> Updated hero copy in <code>src/Home.tsx</code></p>
+            <p class="console-result"><span>✓</span> Tests passed · redline resolved</p>
+          </div>
+        </article>
+
+        <article class="workflow-step verify-step reveal">
+          <div class="step-number">III</div>
+          <div class="step-copy">
+            <p class="step-kicker">Back on the page</p>
+            <h3>See the thought become code.</h3>
+            <p>Your agent locates the source, makes the focused edit, verifies it, and resolves the mark. No copy-pasted screenshots. No lost context.</p>
+          </div>
+          <div class="before-after">
+            <span class="before">Ship faster today</span>
+            <span class="proof-mark">becomes</span>
+            <strong>Turn live feedback<br />into shipped code.</strong>
+          </div>
+        </article>
+      </section>
+
+      <section class="local-first" id="local" aria-labelledby="local-title">
+        <div class="local-copy reveal">
+          <p class="eyebrow">Private by architecture</p>
+          <h2 id="local-title">Your notes stay<br /><em>by your candle.</em></h2>
+          <p>Redline runs on your machine. The Chrome extension speaks to a loopback-only helper. Nothing reaches ArchAstro, and no account stands between your eye and your agent.</p>
+        </div>
+        <div class="local-diagram reveal" aria-label="Redline local-first architecture diagram">
+          <div class="diagram-node"><span>01</span><strong>Chrome</strong><small>select + comment</small></div>
+          <div class="ink-route"><i></i><em>127.0.0.1</em></div>
+          <div class="diagram-node central"><span>02</span><strong>Redline</strong><small>private local state</small></div>
+          <div class="ink-route"><i></i><em>open skill</em></div>
+          <div class="diagram-node"><span>03</span><strong>Your agent</strong><small>pull + act</small></div>
+        </div>
+        <ul class="privacy-notes reveal">
+          <li><span>◎</span> No hosted service</li>
+          <li><span>◎</span> No ArchAstro account</li>
+          <li><span>◎</span> Revocable browser access</li>
+        </ul>
+      </section>
+
+      <section class="finale">
+        <div class="finale-flourish" aria-hidden="true">
+          <svg viewBox="0 0 700 100"><path d="M4 61c95-49 184-44 273-3 77 35 155 26 209-8 46-28 93-31 137-9 29 15 49 16 73 5"/><path d="M485 50c-13 9-17 24-12 41"/></svg>
+        </div>
+        <p class="eyebrow reveal">Write it where it matters</p>
+        <h2 class="reveal">The shortest distance<br />from feedback to finished.</h2>
+        <a class="primary-cta light reveal" href="https://chromewebstore.google.com/detail/redline/bbllmeihbcmemadgmongicpklkjjgoaf">
+          <span>Add Redline to Chrome</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 7l5 5-5 5"/></svg>
+        </a>
+        <div class="install-command reveal"><span>Then run</span><code>npm install -g @archastro/redline</code><button type="button" data-copy="npm install -g @archastro/redline">Copy</button></div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="wordmark footer-mark" href="#top"><span>Redline</span></a>
+      <p>Built by <a href="https://archastro.ai">ArchAstro</a> · Open source under Apache 2.0</p>
+      <a href="https://github.com/ArchAstro/redline">View source ↗</a>
+    </footer>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
