@@ -1,5 +1,6 @@
 'use strict';
 
+const WORKER_PROTOCOL_VERSION = 1;
 let filter = 'pending';
 let allItems = [];
 let activeTab = null;
@@ -34,6 +35,22 @@ function showSiteMessage(message, isError = false) {
   const node = document.getElementById('site-message');
   node.textContent = message || '';
   node.classList.toggle('error', isError);
+}
+
+function setWorkerControlsEnabled(enabled) {
+  for (const control of document.querySelectorAll('[data-worker-control]')) {
+    control.disabled = !enabled;
+  }
+}
+
+function showRestartRecovery(message) {
+  setWorkerControlsEnabled(false);
+  document.getElementById('connection-status').textContent = 'Restart needed';
+  document.getElementById('connection-status').classList.remove('connected');
+  document.getElementById('enable-site').hidden = true;
+  document.getElementById('disable-site').hidden = true;
+  document.getElementById('restart-extension').hidden = false;
+  showSiteMessage(message || 'Redline could not finish loading. Restart its extension process and try again.', true);
 }
 
 function applyPermissionState(state) {
@@ -123,11 +140,18 @@ function renderItems() {
 }
 
 async function refreshState() {
+  setWorkerControlsEnabled(false);
+  document.getElementById('restart-extension').hidden = true;
   activeTab = await getActiveTab();
   activeOrigin = pageOrigin(activeTab?.url);
   document.getElementById('origin').textContent = activeOrigin || 'This page cannot be enabled';
 
   const connection = await send({ type: 'connection-status' });
+  if (connection.protocol_version !== WORKER_PROTOCOL_VERSION) {
+    const error = new Error('Redline was upgraded, but Chrome is still running an older background process. Restart Redline to finish updating.');
+    error.code = 'worker_version_mismatch';
+    throw error;
+  }
   const status = document.getElementById('connection-status');
   status.textContent = connection.connected ? 'Connected' : 'Setup needed';
   status.classList.toggle('connected', connection.connected);
@@ -147,6 +171,8 @@ async function refreshState() {
     allItems = [];
   }
   renderItems();
+  setWorkerControlsEnabled(true);
+  document.getElementById('enable-site').disabled = !connection.connected;
 }
 
 async function runControl(button, action) {
@@ -161,6 +187,7 @@ async function runControl(button, action) {
 }
 
 document.getElementById('enable-site').addEventListener('click', (event) => runControl(event.currentTarget, async () => {
+  if (!permissionState?.pattern) throw new Error('Redline is still loading this site. Restart Redline and try again.');
   const granted = await chrome.permissions.request({ origins: [permissionState.pattern] });
   if (!granted) throw new Error(`Chrome did not grant access to ${activeOrigin}.`);
   await send({ type: 'enable-site', url: activeTab?.url || '', tabId: activeTab?.id });
@@ -214,6 +241,13 @@ document.getElementById('clear-data').addEventListener('click', (event) => runCo
   await refreshState();
 }));
 
+document.getElementById('restart-extension').addEventListener('click', (event) => {
+  event.currentTarget.disabled = true;
+  event.currentTarget.textContent = 'Restarting…';
+  chrome.runtime.reload();
+  window.close();
+});
+
 for (const button of document.querySelectorAll('[data-filter]')) {
   button.addEventListener('click', () => {
     filter = button.dataset.filter;
@@ -225,7 +259,10 @@ for (const button of document.querySelectorAll('[data-filter]')) {
 }
 
 refreshState().catch((error) => {
-  document.getElementById('connection-status').textContent = 'Unavailable';
-  showSiteMessage(error.message, true);
+  console.warn('[redline] popup initialization failed:', error.message);
+  const message = error.code === 'worker_version_mismatch'
+    ? error.message
+    : 'Redline could not start its background process. This can happen after an update. Restart Redline and try again.';
+  showRestartRecovery(message);
   renderItems();
 });

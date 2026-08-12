@@ -1483,7 +1483,7 @@ test("popup connection status verifies the stored capability with the authentica
   });
 
   assert.deepEqual(structuredClone(await background.send({ type: "connection-status" })), {
-    ok: true, connected: true,
+    ok: true, connected: true, protocol_version: 1,
   });
   assert.equal(request.url.endsWith("/generation"), true);
   assert.equal(request.options.headers.authorization, `Bearer ${connection.token}`);

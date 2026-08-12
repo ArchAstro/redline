@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const test = require('node:test');
+const vm = require('node:vm');
 
 const html = fs.readFileSync('extension/popup.html', 'utf8');
 const js = fs.readFileSync('extension/popup.js', 'utf8');
@@ -84,4 +85,93 @@ test('popup keeps refresh, disconnect, and clear-data controls', () => {
   assert.match(js, /type: 'disconnect'/);
   assert.match(js, /type: 'clear-data'/);
   assert.match(js, /other Chrome profiles retain their browser-local drafts and permissions/i);
+});
+
+test('popup can recover from a stale background worker after an extension upgrade', () => {
+  assert.match(html, /id="restart-extension"[^>]*hidden>Restart Redline<\/button>/);
+  assert.match(html, /id="enable-site"[^>]*data-worker-control[^>]*disabled/);
+  assert.match(js, /const WORKER_PROTOCOL_VERSION = 1/);
+  assert.match(js, /connection\.protocol_version !== WORKER_PROTOCOL_VERSION/);
+  assert.match(js, /worker_version_mismatch/);
+  assert.match(js, /showRestartRecovery\(message\)/);
+  assert.match(js, /chrome\.runtime\.reload\(\)/);
+  assert.match(js, /window\.close\(\)/);
+  assert.match(js, /!permissionState\?\.pattern/);
+});
+
+test('an old worker response exposes a working restart action', async () => {
+  const elements = new Map();
+  const element = (id) => {
+    if (!elements.has(id)) {
+      const handlers = {};
+      elements.set(id, {
+        id,
+        handlers,
+        hidden: false,
+        disabled: false,
+        checked: false,
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {} },
+        addEventListener(type, handler) { handlers[type] = handler; },
+        appendChild() {},
+        querySelector() { return null; },
+        textContent: '',
+        innerHTML: '',
+      });
+    }
+    return elements.get(id);
+  };
+  const workerControls = [
+    'enable-site', 'disable-site', 'full-visual', 'refreshShot',
+    'disconnect', 'disable-everywhere', 'clear-data',
+  ].map(element);
+  const filters = ['pending', 'all'].map((name) => {
+    const control = element(`filter-${name}`);
+    control.dataset.filter = name;
+    workerControls.push(control);
+    return control;
+  });
+  for (const id of ['site-message', 'connection-status', 'restart-extension', 'origin', 'list', 'counts']) {
+    element(id);
+  }
+  let reloaded = false;
+  let closed = false;
+  const context = {
+    URL,
+    console,
+    confirm: () => false,
+    setTimeout,
+    clearTimeout,
+    chrome: {
+      tabs: { query: async () => [{ id: 7, url: 'http://127.0.0.1:5173/' }] },
+      runtime: {
+        sendMessage: async () => ({ ok: false, error: 'unknown message: connection-status' }),
+        reload() { reloaded = true; },
+      },
+      permissions: {},
+    },
+    document: {
+      getElementById: element,
+      querySelectorAll(selector) {
+        if (selector === '[data-worker-control]') return workerControls;
+        if (selector === '[data-filter]') return filters;
+        return [];
+      },
+      createElement() { return element('created'); },
+    },
+    window: { close() { closed = true; } },
+  };
+
+  vm.runInNewContext(js, context);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(element('connection-status').textContent, 'Restart needed');
+  assert.match(element('site-message').textContent, /after an update/i);
+  assert.doesNotMatch(element('site-message').textContent, /unknown message/i);
+  assert.equal(element('restart-extension').hidden, false);
+  assert.equal(workerControls.every((control) => control.disabled), true);
+
+  element('restart-extension').handlers.click({ currentTarget: element('restart-extension') });
+  assert.equal(reloaded, true);
+  assert.equal(closed, true);
 });
