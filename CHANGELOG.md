@@ -1,5 +1,11 @@
 # @archastro/redline
 
+## 0.3.2
+
+### Patch Changes
+
+- 0a591ff: Let the Chrome extension detect and restart a stale background worker after an upgrade.
+
 ## 0.3.1
 
 ### Patch Changes
