@@ -1,5 +1,11 @@
 # @archastro/redline
 
+## 0.3.3
+
+### Patch Changes
+
+- 0c25fae: Detect the Chrome Web Store extension from Secure Preferences, add `redline version`, and keep one consent tab for both Chrome-first and CLI-first setup.
+
 ## 0.3.2
 
 ### Patch Changes
