@@ -624,12 +624,16 @@ function fragmentBackground(localInitial = {}, devConfig, {
       tabs: {
         async query(query) {
           installEvents.push(['query', structuredClone(query)]);
-          return [{
-            id: 17,
-            url: `http://127.0.0.1:7878/connect#pair=${'s'.repeat(43)}&expires_at=2026-08-07T19%3A10%3A00.000Z`,
-          }];
+          if (query?.url === 'http://127.0.0.1:7878/connect') {
+            return [{
+              id: 17,
+              url: `http://127.0.0.1:7878/connect#pair=${'s'.repeat(43)}&expires_at=2026-08-07T19%3A10%3A00.000Z`,
+            }];
+          }
+          return [];
         },
         async create(details) { installEvents.push(['create', structuredClone(details)]); },
+        async update(tabId, details) { installEvents.push(['update', tabId, structuredClone(details)]); },
         async remove(tabId) { installEvents.push(['remove', tabId]); },
         onUpdated: { addListener() {} },
         onRemoved: { addListener() {} },
@@ -723,6 +727,8 @@ test('background stages a fragment secret only from the exact packaged top-frame
     { when: Date.parse(background.session.data.redline_pairing_secret.expires_at) },
   ]);
   assert.deepEqual(background.installEvents, [
+    ['query', { url: `chrome-extension://${background.runtimeId}/onboarding.html` }],
+    ['create', { url: `chrome-extension://${background.runtimeId}/onboarding.html`, active: true }],
     ['remove', 17],
   ]);
 
@@ -741,6 +747,73 @@ test('background stages a fragment secret only from the exact packaged top-frame
     });
   }
   assert.equal(background.session.data.redline_pairing_secret.secret, secret);
+});
+
+test('CLI-first pairing focuses an existing onboarding tab instead of opening a second one', async () => {
+  const onboardingUrl = 'chrome-extension://hfjngaflcmkocibdgpeanmhjlkofibca/onboarding.html';
+  const session = memoryStorage();
+  const local = memoryStorage();
+  local.setAccessLevel = async () => {};
+  session.setAccessLevel = async () => {};
+  let messageHandler;
+  const events = [];
+  const runtimeId = 'hfjngaflcmkocibdgpeanmhjlkofibca';
+  const context = {
+    AbortController, URL, URLSearchParams, TextEncoder, atob, console,
+    crypto: require('node:crypto').webcrypto,
+    fetch: async () => { throw new Error('unexpected fetch'); },
+    setTimeout, clearTimeout, importScripts() {},
+    chrome: {
+      storage: { local, session },
+      alarms: {
+        async create() {},
+        async get() { return undefined; },
+        async clear() { return true; },
+        onAlarm: { addListener() {} },
+      },
+      tabs: {
+        async query(query) {
+          events.push(['query', structuredClone(query)]);
+          if (query?.url === onboardingUrl) return [{ id: 9, url: onboardingUrl }];
+          return [];
+        },
+        async create(details) { events.push(['create', structuredClone(details)]); },
+        async update(tabId, details) { events.push(['update', tabId, structuredClone(details)]); },
+        async remove(tabId) { events.push(['remove', tabId]); },
+        onUpdated: { addListener() {} },
+        onRemoved: { addListener() {} },
+      },
+      scripting: { async executeScript() {} },
+      runtime: {
+        id: runtimeId,
+        getURL(pathname) { return `chrome-extension://${runtimeId}/${pathname}`; },
+        onMessage: { addListener(handler) { messageHandler = handler; } },
+        onInstalled: { addListener() {} },
+      },
+    },
+  };
+  context.RedlineRevocations = require('../extension/revocations');
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../extension/background.js'), 'utf8'), context);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const result = await new Promise((resolve) => messageHandler({
+    type: 'redline-stage-pairing-secret',
+    source: 'redline-connect-v1',
+    secret: 's'.repeat(43),
+    expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+  }, {
+    id: runtimeId,
+    frameId: 0,
+    url: 'http://127.0.0.1:7878/connect',
+    tab: { id: 17, url: 'http://127.0.0.1:7878/connect' },
+  }, (value) => resolve(structuredClone(value))));
+
+  assert.deepEqual(result, { ok: true, status: 'staged' });
+  assert.deepEqual(events, [
+    ['query', { url: onboardingUrl }],
+    ['update', 9, { active: true }],
+    ['remove', 17],
+  ]);
 });
 
 test('service-worker alarm removes an expired pairing secret after onboarding closes', async () => {
@@ -766,11 +839,97 @@ test('installation injects only the packaged fragment reader into exact open con
       target: { tabId: 17, frameIds: [0] },
       files: ['connect.js'],
     }],
+    ['query', { url: `chrome-extension://${background.runtimeId}/onboarding.html` }],
     ['create', {
       url: `chrome-extension://${background.runtimeId}/onboarding.html`,
       active: true,
     }],
   ]);
+});
+
+test('CLI-first install stages the connect tab and opens only one onboarding page', async () => {
+  const secret = 's'.repeat(43);
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const runtimeId = 'hfjngaflcmkocibdgpeanmhjlkofibca';
+  const onboardingUrl = `chrome-extension://${runtimeId}/onboarding.html`;
+  const session = memoryStorage();
+  const local = memoryStorage();
+  local.setAccessLevel = async () => {};
+  session.setAccessLevel = async () => {};
+  let messageHandler;
+  let installedHandler;
+  const events = [];
+  const context = {
+    AbortController, URL, URLSearchParams, TextEncoder, atob, console,
+    crypto: require('node:crypto').webcrypto,
+    fetch: async () => { throw new Error('unexpected fetch'); },
+    setTimeout, clearTimeout, importScripts() {},
+    chrome: {
+      storage: { local, session },
+      alarms: {
+        async create() {},
+        async get() { return undefined; },
+        async clear() { return true; },
+        onAlarm: { addListener() {} },
+      },
+      tabs: {
+        async query(query) {
+          events.push(['query', structuredClone(query)]);
+          if (query?.url === 'http://127.0.0.1:7878/connect') {
+            return [{
+              id: 17,
+              url: `http://127.0.0.1:7878/connect#pair=${secret}&expires_at=${encodeURIComponent(expiresAt)}`,
+            }];
+          }
+          const created = events.some((event) => event[0] === 'create');
+          if (query?.url === onboardingUrl && created) return [{ id: 9, url: onboardingUrl }];
+          return [];
+        },
+        async create(details) {
+          events.push(['create', structuredClone(details)]);
+          return { id: 9, url: details.url };
+        },
+        async update(tabId, details) { events.push(['update', tabId, structuredClone(details)]); },
+        async remove(tabId) { events.push(['remove', tabId]); },
+        onUpdated: { addListener() {} },
+        onRemoved: { addListener() {} },
+      },
+      scripting: {
+        async executeScript() {
+          events.push(['execute']);
+          await new Promise((resolve) => messageHandler({
+            type: 'redline-stage-pairing-secret',
+            source: 'redline-connect-v1',
+            secret,
+            expires_at: expiresAt,
+          }, {
+            id: runtimeId,
+            frameId: 0,
+            url: 'http://127.0.0.1:7878/connect',
+            tab: { id: 17, url: 'http://127.0.0.1:7878/connect' },
+          }, resolve));
+        },
+      },
+      runtime: {
+        id: runtimeId,
+        getURL(pathname) { return `chrome-extension://${runtimeId}/${pathname}`; },
+        onMessage: { addListener(handler) { messageHandler = handler; } },
+        onInstalled: { addListener(handler) { installedHandler = handler; } },
+      },
+    },
+  };
+  context.RedlineRevocations = require('../extension/revocations');
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../extension/background.js'), 'utf8'), context);
+  await new Promise((resolve) => setImmediate(resolve));
+  await installedHandler({ reason: 'install' });
+
+  assert.equal(events.filter((event) => event[0] === 'create').length, 1);
+  assert.deepEqual(events.filter((event) => event[0] === 'create' || event[0] === 'remove' || event[0] === 'update'), [
+    ['create', { url: onboardingUrl, active: true }],
+    ['remove', 17],
+    ['update', 9, { active: true }],
+  ]);
+  assert.equal(session.data.redline_pairing_secret.secret, secret);
 });
 
 test('a closed connect tab cannot prevent the install onboarding page from opening', async () => {

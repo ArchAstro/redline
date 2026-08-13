@@ -11,7 +11,7 @@ const PACKAGE_VERSION = require('../package.json').version;
 const { requestPairingWindow, runStorePairingFlow } = require('../setup/redline-agent-setup');
 const { openBrowser } = require('../setup/open-browser');
 const { loadExtensionIdentity } = require('../runtime/lib/extension-identity');
-const { findInstalledExtension } = require('../setup/chrome-profile-discovery');
+const { findInstalledExtension, inspectInstalledExtension } = require('../setup/chrome-profile-discovery');
 const { StateStore } = require('../runtime/lib/state-store');
 
 const STORE_IDENTITY = require('../config/extension-identity.json');
@@ -93,6 +93,37 @@ test('Store identity requires an exact non-placeholder Chrome ID', (t) => {
     fs.writeFileSync(file, JSON.stringify({ extension_id: id, web_store_url: 'https://chromewebstore.google.com/detail/redline/' + id }));
     assert.throws(() => loadExtensionIdentity(file), /identity.*invalid/i);
   }
+});
+
+test('Chrome discovery reads modern Secure Preferences when Preferences has no settings', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-secure-prefs-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const profile = path.join(root, 'Default');
+  const version = '0.3.2';
+  const versionDirectory = '0.3.2_0';
+  fs.mkdirSync(path.join(profile, 'Extensions', STORE_ID, versionDirectory), { recursive: true });
+  fs.writeFileSync(path.join(root, 'Local State'), JSON.stringify({ profile: { last_used: 'Default' } }));
+  fs.writeFileSync(path.join(profile, 'Preferences'), JSON.stringify({
+    extensions: { install_signature: { ids: [STORE_ID] } },
+  }));
+  fs.writeFileSync(path.join(profile, 'Secure Preferences'), JSON.stringify({
+    extensions: { settings: { [STORE_ID]: { disable_reasons: [], manifest: { version } } } },
+  }));
+  fs.writeFileSync(path.join(profile, 'Extensions', STORE_ID, versionDirectory, 'manifest.json'),
+    JSON.stringify({ manifest_version: 3, name: 'Redline', version }));
+
+  assert.equal(findInstalledExtension({ extensionId: STORE_ID, profileRoots: [root] }), true);
+  assert.deepEqual(inspectInstalledExtension({ extensionId: STORE_ID, profileRoots: [root] }), {
+    status: 'enabled',
+    version,
+    profile: 'Default',
+    source: 'secure_preferences',
+  });
+
+  fs.writeFileSync(path.join(profile, 'Secure Preferences'), JSON.stringify({
+    extensions: { settings: { [STORE_ID]: { disable_reasons: ['USER'], manifest: { version } } } },
+  }));
+  assert.equal(findInstalledExtension({ extensionId: STORE_ID, profileRoots: [root] }), false);
 });
 
 test('Chrome discovery accepts only an enabled extension in a known real profile', (t) => {
@@ -514,6 +545,23 @@ test('Store status diagnoses the installed extension and helper without unpacked
     assert.match(result.stdout, /helper:.*up/i);
     assert.match(result.stdout, /popup.*pair/i);
     assert.doesNotMatch(result.stdout, /Load unpacked|~\/\.redline\/extension|--with-screenshots/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('Store status fails when the helper has no paired browsers', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-store-status-unpaired-'));
+  const dataRoot = path.join(home, 'redline-data');
+  try {
+    fs.mkdirSync(dataRoot, { recursive: true });
+    fs.writeFileSync(path.join(dataRoot, 'state.json'), JSON.stringify({
+      version: 2, clients: {}, redlines: {},
+    }));
+    const result = runStoreStatus(home, { REDLINE_DIR: dataRoot });
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /pairing:.*no browser connected/i);
+    assert.match(result.stdout, /redline setup/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

@@ -256,7 +256,7 @@
         disclosure.hidden = true;
         siteStep.hidden = true;
         declinedStep.hidden = true;
-        status.textContent = 'Run this once in Terminal. This page will continue automatically.';
+        status.textContent = 'Keep this tab open. Run the command once in Terminal, in the same Chrome profile. This page becomes the consent form. The toolbar popup cannot finish pairing.';
       },
       showStatus(state) {
         const messages = {

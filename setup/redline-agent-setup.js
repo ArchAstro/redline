@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const { CliCredentialError, requestWithCliCredential } = require('../runtime/lib/cli-http');
 const { loadExtensionIdentity, validExtensionId } = require('../runtime/lib/extension-identity');
 const { healthProbe } = require('../runtime/lib/sidecar-lifecycle');
-const { findInstalledExtension } = require('./chrome-profile-discovery');
+const { findInstalledExtension, inspectInstalledExtension } = require('./chrome-profile-discovery');
 const { assertSupportedPlatform, openBrowser } = require('./open-browser');
 
 const FULL_ACCESS_PATTERN = '<all_urls>';
@@ -455,7 +455,7 @@ async function runStorePairingFlow({
       await openUrl(storeListingUrl);
       openedStoreListing = true;
     } catch {
-      stderr.write('warning: Redline connected, but the Chrome Web Store did not open. Open the Redline listing, then run redline setup again if needed.\n');
+      stderr.write('warning: Could not open the Chrome Web Store listing. Open the Redline listing, then run redline setup again if needed.\n');
     }
   }
   stdout.write('Redline helper is ready. Finish connecting in the Redline extension.\n');
@@ -512,11 +512,30 @@ async function startInstalledHelper(sourceRoot) {
   if (!await checkSidecar(7878)) throw new Error('Redline helper did not become ready on 127.0.0.1:7878');
 }
 
+function pairedBrowserCount() {
+  try {
+    const file = path.join(redlineDataRoot(), 'state.json');
+    if (!fs.existsSync(file)) return null;
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!state || typeof state !== 'object' || !state.clients || typeof state.clients !== 'object' ||
+        Array.isArray(state.clients)) {
+      return null;
+    }
+    return Object.keys(state.clients).length;
+  } catch {
+    return null;
+  }
+}
+
 async function storeExtensionStatus(sourceRoot) {
   const { extensionId, storeListingUrl } = loadStoreIdentity(sourceRoot);
-  const extensionPresent = process.env.REDLINE_TEST_MODE === '1' && process.env.REDLINE_EXTENSION_PRESENT !== undefined
+  const mockedPresence = process.env.REDLINE_TEST_MODE === '1' && process.env.REDLINE_EXTENSION_PRESENT !== undefined;
+  const inspection = mockedPresence
+    ? null
+    : inspectInstalledExtension({ extensionId, platform: process.platform });
+  const extensionPresent = mockedPresence
     ? process.env.REDLINE_EXTENSION_PRESENT === '1'
-    : findInstalledExtension({ extensionId, platform: process.platform });
+    : inspection.status === 'enabled';
   const helperStatus = process.env.REDLINE_TEST_MODE === '1' && process.env.REDLINE_TEST_HELPER_UP !== undefined
     ? (process.env.REDLINE_TEST_HELPER_UP === '1' ? { kind: 'compatible' } : { kind: 'refused' })
     : await healthProbe(7878);
@@ -524,7 +543,14 @@ async function storeExtensionStatus(sourceRoot) {
   log(color('bold', 'Chrome Web Store extension status'));
   let ok = true;
   if (extensionPresent) {
-    log(`  ${color('green', 'extension:')} installed and enabled in the active Chrome profile`);
+    const detail = inspection?.version
+      ? `${inspection.version} installed and enabled in ${inspection.profile}`
+      : 'installed and enabled in the active Chrome profile';
+    log(`  ${color('green', 'extension:')} ${detail}`);
+  } else if (inspection?.status === 'disabled') {
+    ok = false;
+    log(`  ${color('red', 'extension:')} installed but disabled in ${inspection.profile}`);
+    log('  Enable Redline in chrome://extensions');
   } else {
     ok = false;
     log(`  ${color('red', 'Chrome Web Store extension: missing')}`);
@@ -532,7 +558,8 @@ async function storeExtensionStatus(sourceRoot) {
   }
 
   if (helperStatus.kind === 'compatible') {
-    log(`  ${color('green', 'helper:')} up at http://127.0.0.1:7878`);
+    const helperVersion = helperStatus.packageVersion ? `${helperStatus.packageVersion} ` : '';
+    log(`  ${color('green', 'helper:')} ${helperVersion}up at http://127.0.0.1:7878`);
   } else if (helperStatus.kind === 'incompatible') {
     ok = false;
     log(`  ${color('red', 'helper:')} incompatible at http://127.0.0.1:7878`);
@@ -543,7 +570,17 @@ async function storeExtensionStatus(sourceRoot) {
     log('  Run: ' + color('bold', 'redline setup'));
   }
 
-  log(`  ${color('cyan', 'popup:')} verify that this Chrome profile is paired`);
+  const pairedCount = pairedBrowserCount();
+  if (pairedCount === 0) {
+    ok = false;
+    log(`  ${color('red', 'pairing:')} no browser connected`);
+    log('  Run: ' + color('bold', 'redline setup'));
+  } else if (pairedCount > 0) {
+    log(`  ${color('green', 'pairing:')} ${pairedCount} browser${pairedCount === 1 ? '' : 's'} recorded`);
+    log(`  ${color('cyan', 'popup:')} confirm this Chrome profile says Connected`);
+  } else {
+    log(`  ${color('cyan', 'popup:')} verify that this Chrome profile is paired`);
+  }
   return ok;
 }
 

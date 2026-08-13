@@ -50,8 +50,9 @@ never installs, updates, removes, or inspects agent skills or legacy plugin
 state.
 
 `redline setup` starts the local helper and opens a short-lived consent page.
-Approve it to pair the extension with the local helper. No ArchAstro account
-or hosted service is required.
+Approve it to pair the extension with the local helper. Install the Chrome
+extension first or run setup first — both orders finish on that same consent
+page. No ArchAstro account or hosted service is required.
 
 ## Verify the loop
 
@@ -90,6 +91,7 @@ Ambiguous or risky requests still require clarification.
 | ------- | ------- |
 | `redline setup` | Configure or pair the Chrome extension |
 | `redline status` | Diagnose extension and helper state |
+| `redline version` | Print CLI, helper, and Chrome extension versions |
 | `redline start` | Start the local helper |
 | `redline stop` | Stop the local helper |
 | `redline restart` | Restart the local helper |

@@ -1489,6 +1489,21 @@ test("popup connection status verifies the stored capability with the authentica
   assert.equal(request.options.headers.authorization, `Bearer ${connection.token}`);
 });
 
+test("connection-status tells unpaired profiles to run setup", async () => {
+  const background = productionBackground({
+    connection: null,
+    fetch: async () => { throw new Error("must not fetch"); },
+  });
+
+  assert.deepEqual(structuredClone(await background.send({ type: "connection-status" })), {
+    ok: true,
+    connected: false,
+    protocol_version: 1,
+    error_code: "connection_required",
+    message: "This popup cannot pair. Open the setup page, run redline setup once, then approve the consent form.",
+  });
+});
+
 test("a sidecar 401 explains how to refresh the stale extension context", async () => {
   let messageHandler;
   const context = {

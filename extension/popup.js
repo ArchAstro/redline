@@ -49,6 +49,7 @@ function showRestartRecovery(message) {
   document.getElementById('connection-status').classList.remove('connected');
   document.getElementById('enable-site').hidden = true;
   document.getElementById('disable-site').hidden = true;
+  document.getElementById('open-setup').hidden = true;
   document.getElementById('restart-extension').hidden = false;
   showSiteMessage(message || 'Redline could not finish loading. Restart its extension process and try again.', true);
 }
@@ -159,15 +160,21 @@ async function refreshState() {
   const permission = await send({ type: 'permission-state', url: activeTab?.url || '' });
   applyPermissionState(permission.state);
   document.getElementById('enable-site').disabled = !connection.connected;
+  const openSetup = document.getElementById('open-setup');
 
   if (!connection.connected) {
-    showSiteMessage(connection.message || 'Run Redline setup to connect this browser.', true);
+    document.getElementById('enable-site').hidden = true;
+    document.getElementById('disable-site').hidden = true;
+    openSetup.hidden = false;
+    showSiteMessage(connection.message || 'This popup cannot pair. Open the setup page, run redline setup once, then approve the consent form.', true);
     allItems = [];
   } else if (activeOrigin) {
+    openSetup.hidden = true;
     const items = await send({ type: 'list-redlines', origin: activeOrigin });
     allItems = Array.isArray(items.items) ? items.items : [];
     allItems.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   } else {
+    openSetup.hidden = true;
     allItems = [];
   }
   renderItems();
@@ -185,6 +192,11 @@ async function runControl(button, action) {
     button.disabled = false;
   }
 }
+
+document.getElementById('open-setup').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('onboarding.html') });
+  window.close();
+});
 
 document.getElementById('enable-site').addEventListener('click', (event) => runControl(event.currentTarget, async () => {
   if (!permissionState?.pattern) throw new Error('Redline is still loading this site. Restart Redline and try again.');

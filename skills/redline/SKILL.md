@@ -18,6 +18,7 @@ Use the commands below directly when `@archastro/redline` is installed
 globally. If a command is not on `PATH`, run it through the package instead:
 `npx --yes --package @archastro/redline <command>`.
 
+- `redline version` — print the CLI package version plus the running helper and Store extension versions
 - `redline-sidecar start|stop|status|restart|logs` — manage the local HTTP sidecar daemon (default `start`, detaches and returns when /health is up)
 - `redline-pull [origin] [--project NAME] [--no-ack]` — fetch pending items as markdown; acks each unless `--no-ack`
 - `redline-watch [origin] [--project NAME] [--interval N]` — long-running poller; emits one stdout line per new pending redline id. Built to be consumed by `Monitor` so you wake up exactly when the user leaves a new redline.

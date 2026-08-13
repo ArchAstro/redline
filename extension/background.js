@@ -213,8 +213,36 @@ function validConnectSender(msg, sender) {
     exactConnectUrl(sender.url) && exactConnectUrl(sender.tab.url);
 }
 
+let onboardingHandoff = Promise.resolve();
+
+function queueOnboardingHandoff(operation) {
+  const run = onboardingHandoff.then(operation, operation);
+  onboardingHandoff = run.catch(() => {});
+  return run;
+}
+
+async function ensureOnboardingTab() {
+  const onboardingUrl = chrome.runtime.getURL('onboarding.html');
+  let existing = [];
+  try {
+    existing = await chrome.tabs.query({ url: onboardingUrl });
+  } catch {
+    existing = [];
+  }
+  const live = existing.filter((tab) => Number.isSafeInteger(tab.id));
+  if (live.length) {
+    try { await chrome.tabs.update(live[0].id, { active: true }); } catch { /* keep going */ }
+    return live[0].id;
+  }
+  const created = await chrome.tabs.create({ url: onboardingUrl, active: true });
+  return Number.isSafeInteger(created?.id) ? created.id : null;
+}
+
 async function returnToOnboarding(connectTabId) {
-  await chrome.tabs.remove(connectTabId);
+  await queueOnboardingHandoff(async () => {
+    await ensureOnboardingTab();
+    await chrome.tabs.remove(connectTabId);
+  });
 }
 
 class RedlineExtensionError extends Error {
@@ -958,7 +986,7 @@ chrome.runtime.onInstalled?.addListener(async (details) => {
     }
   }
   if (details?.reason === 'install') {
-    await chrome.tabs.create({ url: chrome.runtime.getURL('onboarding.html'), active: true });
+    await queueOnboardingHandoff(() => ensureOnboardingTab());
   }
 });
 
@@ -1181,7 +1209,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             connected: false,
             protocol_version: POPUP_PROTOCOL_VERSION,
             error_code: error.code || 'helper_unavailable',
-            message: error.message,
+            message: error.code === 'connection_required'
+              ? 'This popup cannot pair. Open the setup page, run redline setup once, then approve the consent form.'
+              : error.message,
           });
         }
         return;

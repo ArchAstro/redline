@@ -21,7 +21,11 @@ test('popup is a compact store surface with connection and per-site controls', (
   assert.match(html, /id="connection-status"/);
   assert.match(html, /id="enable-site"[^>]*>Enable Redline on this site/);
   assert.match(html, /id="disable-site"[^>]*>Disable on this site/);
+  assert.match(html, /id="open-setup"[^>]*>Open setup page/);
   assert.match(html, /id="disable-everywhere"[^>]*>Disable everywhere/);
+  assert.match(js, /onboarding\.html/);
+  assert.match(js, /cannot pair/);
+  assert.match(js, /Open the setup page/);
   assert.match(css, /width:\s*360px/);
 });
 
@@ -131,7 +135,7 @@ test('an old worker response exposes a working restart action', async () => {
     workerControls.push(control);
     return control;
   });
-  for (const id of ['site-message', 'connection-status', 'restart-extension', 'origin', 'list', 'counts']) {
+  for (const id of ['site-message', 'connection-status', 'restart-extension', 'open-setup', 'origin', 'list', 'counts']) {
     element(id);
   }
   let reloaded = false;

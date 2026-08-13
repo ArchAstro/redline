@@ -19,6 +19,35 @@ function runRedline(args, home) {
   });
 }
 
+test('redline version prints the package, helper, and extension inventory', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-cli-version-'));
+  try {
+    const result = runRedline(['version'], home);
+    const pkg = require('../package.json');
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, new RegExp(`^@archastro/redline ${pkg.version}$`, 'm'));
+    assert.match(result.stdout, new RegExp(`^cli: ${pkg.version}$`, 'm'));
+    assert.match(result.stdout, /^helper: down$/m);
+    assert.match(result.stdout, /^extension: /m);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('redline --version is an alias for version', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-cli-version-flag-'));
+  try {
+    const result = runRedline(['--version'], home);
+    const pkg = require('../package.json');
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, new RegExp(`^@archastro/redline ${pkg.version}$`, 'm'));
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('redline with no arguments prints a quickstart', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-cli-help-'));
   try {
