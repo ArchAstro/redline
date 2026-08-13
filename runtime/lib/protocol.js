@@ -161,6 +161,7 @@ function checkHealthCompatibility(payload) {
   }
   return {
     compatible: true,
+    packageVersion: payload.package_version,
     pairingAvailable: payload.pairing.available,
     ...(pairingExpiresAt ? { pairingExpiresAt } : {}),
     processId: payload.process.pid,

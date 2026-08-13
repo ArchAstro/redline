@@ -69,7 +69,32 @@ function versionDirectoryMatchesManifest(directoryName, manifestVersion) {
   return directoryName.startsWith(prefix) && /^(?:0|[1-9]\d*)$/.test(directoryName.slice(prefix.length));
 }
 
-function findInstalledExtension({ extensionId, profileRoots, platform, home, fsImpl = fs } = {}) {
+function extensionSettingsEnabled(settings) {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return false;
+  if (settings.state === 0) return false;
+  if (settings.state === 1) return true;
+  if (Array.isArray(settings.disable_reasons)) return settings.disable_reasons.length === 0;
+  if (typeof settings.disable_reasons === 'number') return settings.disable_reasons === 0;
+  return false;
+}
+
+function readExtensionSettings(profile, extensionId, fsImpl) {
+  const candidates = [
+    ['secure_preferences', path.join(profile, 'Secure Preferences'), 'Secure Preferences'],
+    ['preferences', path.join(profile, 'Preferences'), 'Preferences'],
+  ];
+  for (const [source, file, label] of candidates) {
+    if (!fsImpl.existsSync(file)) continue;
+    const data = readRealJson(file, label, fsImpl);
+    const settings = data?.extensions?.settings?.[extensionId];
+    if (settings && typeof settings === 'object' && !Array.isArray(settings)) {
+      return { settings, source };
+    }
+  }
+  return { settings: null, source: null };
+}
+
+function inspectInstalledExtension({ extensionId, profileRoots, platform, home, fsImpl = fs } = {}) {
   if (!validExtensionId(extensionId)) throw new Error('Chrome Web Store identity configuration is invalid');
   const roots = profileRoots || defaultProfileRoots(platform, home);
   if (!Array.isArray(roots) || roots.length > MAX_PROFILE_ROOTS) throw new Error('Chrome profile root scan limit exceeded');
@@ -84,10 +109,13 @@ function findInstalledExtension({ extensionId, profileRoots, platform, home, fsI
     const profile = path.join(root, activeProfile);
     if (!fsImpl.existsSync(profile)) continue;
     realDirectory(profile, 'Chrome profile directory', fsImpl);
-    const preferencesFile = path.join(profile, 'Preferences');
-    if (!fsImpl.existsSync(preferencesFile)) continue;
-    const preferences = readRealJson(preferencesFile, 'Preferences', fsImpl);
-    if (preferences?.extensions?.settings?.[extensionId]?.state !== 1) continue;
+    const { settings, source } = readExtensionSettings(profile, extensionId, fsImpl);
+    if (!settings) continue;
+    const enabled = extensionSettingsEnabled(settings);
+    const settingsVersion = typeof settings.manifest?.version === 'string' ? settings.manifest.version : null;
+    if (!enabled) {
+      return { status: 'disabled', version: settingsVersion, profile: activeProfile, source };
+    }
     const extensionRoot = path.join(profile, 'Extensions', extensionId);
     if (!fsImpl.existsSync(extensionRoot)) continue;
     realDirectory(path.join(profile, 'Extensions'), 'Chrome Extensions directory', fsImpl);
@@ -102,10 +130,26 @@ function findInstalledExtension({ extensionId, profileRoots, platform, home, fsI
       if (!fsImpl.existsSync(manifestFile)) continue;
       const manifest = readRealJson(manifestFile, 'extension manifest', fsImpl, MAX_MANIFEST_BYTES);
       if (manifest?.manifest_version === 3 && manifest.name === 'Redline' &&
-          versionDirectoryMatchesManifest(versionEntry.name, manifest.version)) return true;
+          versionDirectoryMatchesManifest(versionEntry.name, manifest.version)) {
+        return {
+          status: 'enabled',
+          version: manifest.version,
+          profile: activeProfile,
+          source,
+        };
+      }
     }
   }
-  return false;
+  return { status: 'missing', version: null, profile: null, source: null };
 }
 
-module.exports = { defaultProfileRoots, findInstalledExtension };
+function findInstalledExtension(options) {
+  return inspectInstalledExtension(options).status === 'enabled';
+}
+
+module.exports = {
+  defaultProfileRoots,
+  extensionSettingsEnabled,
+  findInstalledExtension,
+  inspectInstalledExtension,
+};

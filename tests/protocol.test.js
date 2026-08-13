@@ -56,6 +56,7 @@ test('compatible health tolerates a higher minor version and unknown fields', ()
 
   assert.deepEqual(result, {
     compatible: true,
+    packageVersion,
     pairingAvailable: true,
     pairingExpiresAt: expiry,
     processId: process.pid,
@@ -70,6 +71,7 @@ test('directory proof tolerates unknown fields and canonicalizes the result', ()
 
   assert.deepEqual(checkHealthCompatibility({ ...validHealth(), directory }), {
     compatible: true,
+    packageVersion,
     pairingAvailable: false,
     processId: process.pid,
     instanceId: INSTANCE_ID,
@@ -208,6 +210,7 @@ test('health accepts standard semantic package versions with prerelease and buil
       package_version: packageVersion,
     }), {
       compatible: true,
+      packageVersion,
       pairingAvailable: false,
       processId: process.pid,
       instanceId: INSTANCE_ID,
@@ -263,6 +266,7 @@ test('health parses pairing availability only from an explicit boolean', () => {
     pairing: { available: false },
   }), {
     compatible: true,
+    packageVersion,
     pairingAvailable: false,
     processId: process.pid,
     instanceId: INSTANCE_ID,

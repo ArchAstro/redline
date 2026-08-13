@@ -3,10 +3,14 @@
 
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const { inspectInstalledExtension } = require('./chrome-profile-discovery');
+const { loadExtensionIdentity } = require('../runtime/lib/extension-identity');
+const { healthProbe } = require('../runtime/lib/sidecar-lifecycle');
 
 const ROOT = path.resolve(__dirname, '..');
 const SETUP = path.join(ROOT, 'setup/redline-agent-setup.js');
 const BIN_DIR = path.join(ROOT, 'runtime/bin');
+const PACKAGE = require('../package.json');
 
 const COMMANDS = {
   start: ['redline-sidecar', ['start']],
@@ -22,6 +26,51 @@ const COMMANDS = {
   clear: ['redline-clear', []],
 };
 
+function parseCliPort() {
+  const port = Number.parseInt(process.env.REDLINE_PORT || '7878', 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return port;
+}
+
+function inspectStoreExtension() {
+  try {
+    const identity = loadExtensionIdentity(path.join(ROOT, 'config/extension-identity.json'));
+    return inspectInstalledExtension({ extensionId: identity.extensionId });
+  } catch {
+    return { status: 'missing', version: null, profile: null, source: null };
+  }
+}
+
+function formatExtensionLine(inspection) {
+  if (inspection.status === 'enabled') {
+    return `extension: ${inspection.version} enabled (${inspection.profile})`;
+  }
+  if (inspection.status === 'disabled') {
+    return `extension: ${inspection.version || 'unknown'} disabled (${inspection.profile})`;
+  }
+  return 'extension: not found in the active Chrome profile';
+}
+
+function formatHelperLine(helper) {
+  if (helper?.kind === 'compatible') {
+    return `helper: ${helper.packageVersion || 'unknown'} up`;
+  }
+  if (helper?.kind === 'incompatible') return 'helper: incompatible';
+  return 'helper: down';
+}
+
+async function printVersion() {
+  const port = parseCliPort();
+  const helper = port === null ? { kind: 'incompatible' } : await healthProbe(port);
+  const inspection = inspectStoreExtension();
+  process.stdout.write([
+    `@archastro/redline ${PACKAGE.version}`,
+    `cli: ${PACKAGE.version}`,
+    formatHelperLine(helper),
+    formatExtensionLine(inspection),
+  ].join('\n') + '\n');
+}
+
 function printHelp() {
   process.stdout.write(`Redline
 
@@ -34,6 +83,7 @@ Quick start:
 Common commands:
   setup [flags]      Configure or pair the Chrome extension
   status             Check Chrome extension presence and helper health
+  version            Print CLI, helper, and extension versions
   start              Start the helper in the background
   stop               Stop the helper
   restart            Restart the helper
@@ -76,6 +126,14 @@ function main(argv) {
 
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
     printHelp();
+    return;
+  }
+
+  if (cmd === 'version' || cmd === '--version' || cmd === '-V') {
+    printVersion().catch((error) => {
+      process.stderr.write(`failed to read Redline versions: ${error.message}\n`);
+      process.exit(1);
+    });
     return;
   }
 
