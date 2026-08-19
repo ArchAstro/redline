@@ -73,7 +73,7 @@
     "ui-review"
   ],
   "dependencies": {
-    "@homebridge/dbus-native": "0.7.7",
+    "@homebridge/dbus-native": "0.7.9",
     "pngjs": "7.0.0"
   }
 }
