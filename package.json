@@ -1,6 +1,6 @@
 {
   "name": "@archastro/redline",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Highlight live web UI, leave redlines, and pipe them into any agent that supports open agent skills.",
   "bin": {
     "redline": "setup/redline.js",
