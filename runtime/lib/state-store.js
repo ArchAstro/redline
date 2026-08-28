@@ -833,7 +833,7 @@ class StateStore {
         const screenshot = inspectRegular(path.join(this.screenshotsDir, `${item.screenshot_id}.png`),
           'legacy screenshot', null);
         if (screenshot === null) throw new Error('legacy redlines.json references a missing screenshot; refusing migration');
-        imported[item.id] = { ...item, screenshot_sha256: validatePng(screenshot, { decode: false }).sha256 };
+        imported[item.id] = { ...item, screenshot_sha256: validatePng(screenshot).sha256 };
       } else {
         imported[item.id] = item;
       }
