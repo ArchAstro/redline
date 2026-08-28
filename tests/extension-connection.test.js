@@ -749,6 +749,25 @@ test('background stages a fragment secret only from the exact packaged top-frame
   assert.equal(background.session.data.redline_pairing_secret.secret, secret);
 });
 
+test('background accepts real Chromium connect sender whose tab.url retains the pairing hash', async () => {
+  const background = fragmentBackground();
+  const secret = 'k'.repeat(43);
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const message = {
+    type: 'redline-stage-pairing-secret', source: 'redline-connect-v1', secret, expires_at: expiresAt,
+  };
+  const chromiumSender = {
+    id: background.runtimeId,
+    frameId: 0,
+    url: 'http://127.0.0.1:7878/connect',
+    tab: { id: 23, url: `http://127.0.0.1:7878/connect#pair=${secret}&expires_at=${encodeURIComponent(expiresAt)}` },
+  };
+
+  assert.deepEqual(await background.send(message, chromiumSender), { ok: true, status: 'staged' });
+  assert.equal(background.session.data.redline_pairing_secret.secret, secret);
+  assert.equal(background.session.data.redline_pairing_secret.expires_at, expiresAt);
+});
+
 test('CLI-first pairing focuses an existing onboarding tab instead of opening a second one', async () => {
   const onboardingUrl = 'chrome-extension://hfjngaflcmkocibdgpeanmhjlkofibca/onboarding.html';
   const session = memoryStorage();

@@ -73,6 +73,7 @@ test('browser opener keeps the pairing URL out of process metadata and uses the 
   assert.equal(JSON.stringify(calls[0].args).includes(secretUrl), false);
   assert.equal(JSON.stringify(calls[0].options.env || {}).includes(secretUrl), false);
   assert.match(calls[0].options.input, /connect#pair=secret/);
+  assert.match(calls[0].options.input, /Google Chrome/);
   let portalUrl;
   await openBrowser(secretUrl, {
     platform: 'linux',

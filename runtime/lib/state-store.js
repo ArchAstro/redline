@@ -77,7 +77,7 @@ function validRedline(id, item) {
       : item.screenshot_sha256 === undefined || item.screenshot_sha256 === null);
 }
 
-function validatePng(buffer, { submission = false } = {}) {
+function validatePng(buffer, { submission = false, decode = true } = {}) {
   const fail = (message) => {
     if (submission) throw new StateStoreError('invalid_submission', message);
     throw new Error(`screenshot PNG integrity failure: ${message}`);
@@ -89,12 +89,14 @@ function validatePng(buffer, { submission = false } = {}) {
   const height = buffer.readUInt32BE(20);
   if (width < 1 || height < 1 || width > MAX_SCREENSHOT_DIMENSION || height > MAX_SCREENSHOT_DIMENSION ||
       width * height > MAX_SCREENSHOT_PIXELS) fail('dimensions exceed bounds');
-  let decoded;
-  try { decoded = decodePng(buffer); } catch {
-    fail('PNG cannot be decoded');
-  }
-  if (!decoded || decoded.width !== width || decoded.height !== height || decoded.data.length > MAX_SCREENSHOT_PIXELS * 4) {
-    fail('decoded PNG dimensions are inconsistent');
+  if (decode) {
+    let decoded;
+    try { decoded = decodePng(buffer); } catch {
+      fail('PNG cannot be decoded');
+    }
+    if (!decoded || decoded.width !== width || decoded.height !== height || decoded.data.length > MAX_SCREENSHOT_PIXELS * 4) {
+      fail('decoded PNG dimensions are inconsistent');
+    }
   }
   return {
     width,
@@ -831,7 +833,7 @@ class StateStore {
         const screenshot = inspectRegular(path.join(this.screenshotsDir, `${item.screenshot_id}.png`),
           'legacy screenshot', null);
         if (screenshot === null) throw new Error('legacy redlines.json references a missing screenshot; refusing migration');
-        imported[item.id] = { ...item, screenshot_sha256: validatePng(screenshot).sha256 };
+        imported[item.id] = { ...item, screenshot_sha256: validatePng(screenshot, { decode: false }).sha256 };
       } else {
         imported[item.id] = item;
       }
@@ -885,7 +887,7 @@ class StateStore {
       const screenshot = inspectRegular(path.join(this.screenshotsDir, `${item.screenshot_id}.png`),
         'referenced screenshot', null);
       if (screenshot === null) throw new Error('referenced screenshot is missing; refusing to continue');
-      const metadata = validatePng(screenshot);
+      const metadata = validatePng(screenshot, { decode: false });
       if (metadata.sha256 !== item.screenshot_sha256) {
         throw new Error('referenced screenshot digest does not match state; refusing to continue');
       }
@@ -1087,7 +1089,7 @@ class StateStore {
       if (existing.response.screenshot_id) {
         const screenshot = inspectRegular(path.join(this.screenshotsDir, `${existing.response.screenshot_id}.png`),
           'replayed screenshot', null);
-        if (screenshot === null || validatePng(screenshot).sha256 !== existing.response.screenshot_sha256) {
+        if (screenshot === null || validatePng(screenshot, { decode: false }).sha256 !== existing.response.screenshot_sha256) {
           throw new Error('replayed screenshot digest does not match the immutable operation');
         }
       }
@@ -1257,7 +1259,7 @@ class StateStore {
       if (!item) return null;
       const screenshot = inspectRegular(path.join(this.screenshotsDir, `${screenshotId}.png`), 'screenshot', null);
       if (screenshot === null) throw new Error('referenced screenshot is missing');
-      if (validatePng(screenshot).sha256 !== item.screenshot_sha256) {
+      if (validatePng(screenshot, { decode: false }).sha256 !== item.screenshot_sha256) {
         throw new Error('screenshot digest does not match state');
       }
       return screenshot;

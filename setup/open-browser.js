@@ -17,7 +17,14 @@ async function openBrowser(url, { platform = process.platform, spawn = spawnSync
     return;
   }
   const command = 'osascript';
-  const program = `open location ${JSON.stringify(url)}\n`;
+  const program = `try
+tell application "Google Chrome"
+activate
+open location ${JSON.stringify(url)}
+end tell
+on error
+open location ${JSON.stringify(url)}
+end try\n`;
   const result = spawn(command, ['-'], { input: program, encoding: 'utf8', stdio: ['pipe', 'ignore', 'ignore'] });
   if (result.error || result.status !== 0) {
     throw new Error(`could not open the browser with ${command}`);
