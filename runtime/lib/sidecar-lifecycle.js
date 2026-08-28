@@ -495,7 +495,8 @@ async function launchServer(paths, port, instanceId, env) {
   return await new Promise((resolve, reject) => {
     let settled = false;
     let publishing = false;
-    const timeout = setTimeout(() => fail(new Error('Redline child did not signal readiness within 3 seconds')), 3000);
+    const readinessTimeoutMs = Number.parseInt(process.env.REDLINE_READINESS_TIMEOUT_MS || '10000', 10);
+    const timeout = setTimeout(() => fail(new Error(`Redline child did not signal readiness within ${Math.round(readinessTimeoutMs / 1000)} seconds`)), readinessTimeoutMs);
     const signalHandlers = new Map();
 
     function cleanupListeners() {

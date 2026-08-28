@@ -195,7 +195,7 @@ function exactPairingTabUrl(value) {
     const url = new URL(value);
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.port !== '7878' ||
         url.pathname !== '/connect' || url.username || url.password || url.search) return false;
-    return /^#pair=[A-Za-z0-9_-]{43}&expires_at=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}\.\d{3}Z$/.test(url.hash);
+    return /^#pair=[A-Za-z0-9_-]{43}&expires_at=\d{4}-\d{2}-\d{2}T\d{2}(?:%3A|:)\d{2}(?:%3A|:)\d{2}\.\d{3}Z$/.test(url.hash);
   } catch {
     return false;
   }
@@ -210,7 +210,7 @@ function validConnectSender(msg, sender) {
     Date.parse(msg.expires_at) <= Date.now() + PAIRING_SECRET_TTL_MS &&
     sender?.id === chrome.runtime.id && sender.frameId === 0 &&
     Number.isSafeInteger(sender.tab?.id) &&
-    exactConnectUrl(sender.url) && exactConnectUrl(sender.tab.url);
+    exactConnectUrl(sender.url) && (exactConnectUrl(sender.tab.url) || exactPairingTabUrl(sender.tab.url));
 }
 
 let onboardingHandoff = Promise.resolve();

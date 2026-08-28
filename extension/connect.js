@@ -9,7 +9,7 @@
       url.pathname !== '/connect' || url.username || url.password || url.search) return;
 
   const fragment = url.hash.match(
-    /^#pair=([A-Za-z0-9_-]{43})&expires_at=(\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}\.\d{3}Z)$/
+    /^#pair=([A-Za-z0-9_-]{43})&expires_at=(\d{4}-\d{2}-\d{2}T\d{2}(?:%3A|:)\d{2}(?:%3A|:)\d{2}\.\d{3}Z)$/
   );
   if (!fragment) return;
   const secret = fragment[1];
