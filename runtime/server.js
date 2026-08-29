@@ -250,7 +250,11 @@ async function requestIsAuthorized(req) {
   if (requestOrigin(req) === EXTENSION_ORIGIN) {
     return { kind: 'browser', token };
   }
-  if (requestOrigin(req) === null) return await stateStore.verifyCliToken(token) ? { kind: 'cli' } : null;
+  if (requestOrigin(req) === null) {
+    if (await stateStore.verifyCliToken(token)) return { kind: 'cli' };
+    if (await stateStore.verifyClientToken(token)) return { kind: 'browser', token };
+    return null;
+  }
   return null;
 }
 

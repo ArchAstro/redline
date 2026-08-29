@@ -210,7 +210,8 @@ function validConnectSender(msg, sender) {
     Date.parse(msg.expires_at) <= Date.now() + PAIRING_SECRET_TTL_MS &&
     sender?.id === chrome.runtime.id && sender.frameId === 0 &&
     Number.isSafeInteger(sender.tab?.id) &&
-    exactConnectUrl(sender.url) && (exactConnectUrl(sender.tab.url) || exactPairingTabUrl(sender.tab.url));
+    (exactConnectUrl(sender.url) || exactPairingTabUrl(sender.url)) &&
+    (exactConnectUrl(sender.tab.url) || exactPairingTabUrl(sender.tab.url));
 }
 
 let onboardingHandoff = Promise.resolve();

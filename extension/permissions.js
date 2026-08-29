@@ -35,6 +35,16 @@
     return originDetails(value).pattern;
   }
 
+  function isLocalOrigin(origin) {
+    try {
+      const url = new URL(origin);
+      const host = url.hostname.toLowerCase();
+      return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
+    } catch {
+      return false;
+    }
+  }
+
   async function registrationId(origin) {
     const digest = new Uint8Array(await crypto.subtle.digest(
       'SHA-256',
@@ -167,6 +177,17 @@
           siteEnabled: false,
         };
       }
+      if (details && isLocalOrigin(details.origin)) {
+        const fullVisualEnabled = await containsOrigin(FULL_VISUAL_PATTERN);
+        return {
+          supported: true,
+          origin: details.origin,
+          pattern: details.pattern,
+          siteEnabled: true,
+          fullVisualEnabled,
+          isLocal: true,
+        };
+      }
       const [storedOrigins, siteEnabled, fullVisualEnabled] = await Promise.all([
         readStoredOrigins(),
         details ? containsOrigin(details.pattern) : false,
@@ -178,6 +199,7 @@
         pattern: details?.pattern || null,
         siteEnabled: !!details && storedOrigins.includes(details.origin) && siteEnabled,
         fullVisualEnabled,
+        isLocal: false,
       };
     }
 
@@ -197,6 +219,9 @@
       },
       async enableSite(value) {
         const details = originDetails(value);
+        if (isLocalOrigin(details.origin)) {
+          return { ...details, isLocal: true };
+        }
         if (!await containsOrigin(details.pattern)) {
           throw new PermissionError('permission_denied',
             `Redline was not enabled for ${details.origin}. Chrome has not granted site access.`);
@@ -211,6 +236,9 @@
       },
       async disableSite(value) {
         const details = originDetails(value);
+        if (isLocalOrigin(details.origin)) {
+          return { ...details, isLocal: true };
+        }
         if (!await containsOrigin(FULL_VISUAL_PATTERN)) {
           await permissions.remove({ origins: [details.pattern] });
         }

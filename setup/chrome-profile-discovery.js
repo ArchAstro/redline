@@ -75,6 +75,7 @@ function extensionSettingsEnabled(settings) {
   if (settings.state === 1) return true;
   if (Array.isArray(settings.disable_reasons)) return settings.disable_reasons.length === 0;
   if (typeof settings.disable_reasons === 'number') return settings.disable_reasons === 0;
+  if (settings.location === 4) return true;
   return false;
 }
 
@@ -115,6 +116,20 @@ function inspectInstalledExtension({ extensionId, profileRoots, platform, home, 
     const settingsVersion = typeof settings.manifest?.version === 'string' ? settings.manifest.version : null;
     if (!enabled) {
       return { status: 'disabled', version: settingsVersion, profile: activeProfile, source };
+    }
+    if (settings.location === 4 && typeof settings.path === 'string') {
+      const manifestFile = path.join(settings.path, 'manifest.json');
+      if (fsImpl.existsSync(manifestFile)) {
+        const manifest = readRealJson(manifestFile, 'extension manifest', fsImpl, MAX_MANIFEST_BYTES);
+        if (manifest?.manifest_version === 3 && manifest.name === 'Redline') {
+          return {
+            status: 'enabled',
+            version: manifest.version,
+            profile: activeProfile,
+            source,
+          };
+        }
+      }
     }
     const extensionRoot = path.join(profile, 'Extensions', extensionId);
     if (!fsImpl.existsSync(extensionRoot)) continue;
