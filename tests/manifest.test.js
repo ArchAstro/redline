@@ -18,21 +18,40 @@ test('store manifest is least-privilege MV3 with one exact connect-page reader',
   assert.equal(manifest.manifest_version, 3);
   assert.deepEqual(manifest.permissions, ['storage', 'activeTab', 'scripting', 'alarms']);
   assert.ok(Number(manifest.minimum_chrome_version) >= 111);
-  assert.deepEqual(manifest.host_permissions, ['http://127.0.0.1:7878/*']);
+  assert.deepEqual(manifest.host_permissions, [
+    'http://127.0.0.1/*',
+    'https://127.0.0.1/*',
+    'http://localhost/*',
+    'https://localhost/*',
+    'http://*.localhost/*',
+    'https://*.localhost/*',
+  ]);
   assert.deepEqual(manifest.optional_host_permissions, ['<all_urls>']);
-  assert.deepEqual(manifest.content_scripts, [{
-    matches: ['http://127.0.0.1:7878/connect'],
-    js: ['connect.js'],
-    run_at: 'document_start',
-    all_frames: false,
-  }]);
+  assert.deepEqual(manifest.content_scripts, [
+    {
+      matches: ['http://127.0.0.1:7878/connect'],
+      js: ['connect.js'],
+      run_at: 'document_start',
+      all_frames: false,
+    },
+    {
+      matches: [
+        'http://localhost/*',
+        'https://localhost/*',
+        'http://127.0.0.1/*',
+        'https://127.0.0.1/*',
+        'http://*.localhost/*',
+        'https://*.localhost/*',
+      ],
+      js: ['content.js'],
+      css: ['content.css'],
+      run_at: 'document_idle',
+    },
+  ]);
   assert.equal(manifest.background.service_worker, 'background.js');
   assert.equal(manifest.background.type, undefined);
   assert.equal(manifest.externally_connectable, undefined);
   assert.equal(JSON.stringify(manifest).includes('auth.js'), false);
-  assert.equal(JSON.stringify(manifest).includes('content.js'), false);
-  assert.equal(JSON.stringify(manifest).includes('http://localhost'), false);
-  assert.equal(JSON.stringify(manifest).includes('https://localhost'), false);
 });
 
 test('store manifest includes a valid 128 pixel product icon', () => {

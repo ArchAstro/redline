@@ -14,7 +14,12 @@
     "alarms"
   ],
   "host_permissions": [
-    "http://127.0.0.1:7878/*"
+    "http://127.0.0.1/*",
+    "https://127.0.0.1/*",
+    "http://localhost/*",
+    "https://localhost/*",
+    "http://*.localhost/*",
+    "https://*.localhost/*"
   ],
   "optional_host_permissions": [
     "<all_urls>"
@@ -32,6 +37,23 @@
       ],
       "run_at": "document_start",
       "all_frames": false
+    },
+    {
+      "matches": [
+        "http://localhost/*",
+        "https://localhost/*",
+        "http://127.0.0.1/*",
+        "https://127.0.0.1/*",
+        "http://*.localhost/*",
+        "https://*.localhost/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "action": {

@@ -60,15 +60,21 @@ function applyPermissionState(state) {
   const disable = document.getElementById('disable-site');
   const fullVisual = document.getElementById('full-visual');
   fullVisual.checked = !!state.fullVisualEnabled;
-  enable.hidden = !state.supported || state.siteEnabled;
-  disable.hidden = !state.supported || !state.siteEnabled;
-  if (!state.supported) {
-    const message = state.errorCode === 'restricted_url'
-      ? (state.message || 'Chrome pages cannot be enabled. Open a website to use Redline.')
-      : state.message;
-    showSiteMessage(message, true);
+  if (state.isLocal) {
+    enable.hidden = true;
+    disable.hidden = true;
+    showSiteMessage('Redline is enabled for local development.');
   } else {
-    showSiteMessage(state.siteEnabled ? 'Redline is enabled here.' : 'Redline is off for this site.');
+    enable.hidden = !state.supported || state.siteEnabled;
+    disable.hidden = !state.supported || !state.siteEnabled;
+    if (!state.supported) {
+      const message = state.errorCode === 'restricted_url'
+        ? (state.message || 'Chrome pages cannot be enabled. Open a website to use Redline.')
+        : state.message;
+      showSiteMessage(message, true);
+    } else {
+      showSiteMessage(state.siteEnabled ? 'Redline is enabled here.' : 'Redline is off for this site.');
+    }
   }
 }
 

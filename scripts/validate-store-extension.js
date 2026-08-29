@@ -52,8 +52,16 @@ function validateStoreExtension(root = path.resolve(__dirname, '..')) {
   if (manifest.manifest_version !== 3) throw new Error('Store manifest must use Manifest V3');
   if (manifest.version !== pkg.version) throw new Error('Store manifest version must match package.json');
   if (manifest.key !== undefined) throw new Error('Store manifest must not embed a development key');
-  if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['http://127.0.0.1:7878/*'])) {
-    throw new Error('Store manifest must use the exact loopback host permission');
+  const expectedHostPermissions = [
+    'http://127.0.0.1/*',
+    'https://127.0.0.1/*',
+    'http://localhost/*',
+    'https://localhost/*',
+    'http://*.localhost/*',
+    'https://*.localhost/*',
+  ];
+  if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(expectedHostPermissions)) {
+    throw new Error('Store manifest must use the exact loopback host permissions');
   }
   if (JSON.stringify(manifest.optional_host_permissions) !== JSON.stringify(['<all_urls>'])) {
     throw new Error('Store manifest must keep broad page access optional');

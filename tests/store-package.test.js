@@ -74,7 +74,14 @@ test('functional Store package is deterministic and contains only the reviewed a
   const manifest = JSON.parse(entries.get('manifest.json').toString('utf8'));
   assert.equal(manifest.version, PACKAGE.version);
   assert.equal(manifest.key, undefined, 'Store uploads must rely on their assigned item identity');
-  assert.deepEqual(manifest.host_permissions, ['http://127.0.0.1:7878/*']);
+  assert.deepEqual(manifest.host_permissions, [
+    'http://127.0.0.1/*',
+    'https://127.0.0.1/*',
+    'http://localhost/*',
+    'https://localhost/*',
+    'http://*.localhost/*',
+    'https://*.localhost/*',
+  ]);
   assert.deepEqual(manifest.optional_host_permissions, ['<all_urls>']);
 
   const joined = [...entries.values()].map((value) => value.toString('utf8')).join('\n');
