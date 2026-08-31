@@ -33,7 +33,7 @@
     "version": "npx changeset version && node setup/sync-versions.js"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.29.8",
+    "@changesets/cli": "^3.0.1",
     "vite": "^5.4.21"
   },
   "overrides": {
