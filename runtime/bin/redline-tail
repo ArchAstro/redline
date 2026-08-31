@@ -2,5 +2,13 @@
 set -e
 set -o pipefail
 PORT="${REDLINE_PORT:-7878}"
-HERE="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+  link="$(readlink "$SCRIPT")"
+  case "$link" in
+    /*) SCRIPT="$link" ;;
+    *)  SCRIPT="$(cd "$(dirname "$SCRIPT")" && pwd)/$link" ;;
+  esac
+done
+HERE="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
 node "$HERE/lib/cli-http.js" "$PORT" GET "/redlines" | (command -v jq >/dev/null && jq . || cat)

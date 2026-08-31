@@ -240,3 +240,47 @@ test('redline skill uses the authenticated screenshot command instead of curl', 
   assert.match(skill, /redline-screenshot <screenshot_id> <output\.png>/);
   assert.doesNotMatch(skill, /curl <url> -o/);
 });
+
+test('runtime bin scripts resolve module paths when invoked via symlinks', async (t) => {
+  const context = await startSidecar(t);
+  const symlinkBinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'redline-symlink-bin-'));
+  t.after(() => fs.rmSync(symlinkBinDir, { recursive: true, force: true }));
+
+  const scripts = ['redline-pull', 'redline-tail', 'redline-sidecar', 'redline-watch', 'redline-clear', 'redline-screenshot'];
+  for (const script of scripts) {
+    fs.symlinkSync(path.join(ROOT, 'runtime/bin', script), path.join(symlinkBinDir, script));
+  }
+
+  const pull = spawnSync(path.join(symlinkBinDir, 'redline-pull'), ['--no-ack'], {
+    cwd: symlinkBinDir,
+    env: { ...process.env, REDLINE_DIR: context.dir, REDLINE_PORT: String(context.port) },
+    encoding: 'utf8',
+    timeout: 3000,
+  });
+  assert.equal(pull.status, 0, pull.stderr || pull.stdout);
+
+  const tail = spawnSync(path.join(symlinkBinDir, 'redline-tail'), [], {
+    cwd: symlinkBinDir,
+    env: { ...process.env, REDLINE_DIR: context.dir, REDLINE_PORT: String(context.port) },
+    encoding: 'utf8',
+    timeout: 3000,
+  });
+  assert.equal(tail.status, 0, tail.stderr || tail.stdout);
+
+  const clear = spawnSync(path.join(symlinkBinDir, 'redline-clear'), [], {
+    cwd: symlinkBinDir,
+    env: { ...process.env, REDLINE_DIR: context.dir, REDLINE_PORT: String(context.port) },
+    encoding: 'utf8',
+    timeout: 3000,
+  });
+  assert.equal(clear.status, 0, clear.stderr || clear.stdout);
+
+  const sidecarHelp = spawnSync(path.join(symlinkBinDir, 'redline-sidecar'), ['--help'], {
+    cwd: symlinkBinDir,
+    env: { ...process.env, REDLINE_DIR: context.dir, REDLINE_PORT: String(context.port) },
+    encoding: 'utf8',
+    timeout: 3000,
+  });
+  assert.equal(sidecarHelp.status, 0, sidecarHelp.stderr || sidecarHelp.stdout);
+  assert.match(sidecarHelp.stdout, /usage:\s*redline-sidecar/i);
+});

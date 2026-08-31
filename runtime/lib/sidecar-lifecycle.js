@@ -117,19 +117,29 @@ function removeLifecycleFile(file, label, expected) {
 }
 
 function readPrivateIdentity(file, label) {
-  const inspected = inspectLifecycleFile(file, label);
-  if (!inspected) return null;
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-  try {
-    const opened = fs.fstatSync(fd);
-    if (opened.nlink !== 1 || opened.dev !== inspected.before.dev || opened.ino !== inspected.before.ino) {
-      throw new Error(`${label} changed before permission repair`);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      const inspected = inspectLifecycleFile(file, label);
+      if (!inspected) return null;
+      const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+      try {
+        const opened = fs.fstatSync(fd);
+        if (opened.nlink !== 1 || opened.dev !== inspected.before.dev || opened.ino !== inspected.before.ino) {
+          throw new Error(`${label} changed before permission repair`);
+        }
+        fs.fchmodSync(fd, 0o600);
+      } finally {
+        fs.closeSync(fd);
+      }
+      return inspected.contents;
+    } catch (error) {
+      if (attempt < 19 && (error.message.includes('has multiple links') || error.message.includes('changed before permission repair') || error.message.includes('changed while it was being opened'))) {
+        sleepSync(10);
+        continue;
+      }
+      throw error;
     }
-    fs.fchmodSync(fd, 0o600);
-  } finally {
-    fs.closeSync(fd);
   }
-  return inspected.contents;
 }
 
 function publishPrivateFile(file, contents) {
