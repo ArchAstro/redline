@@ -1,5 +1,12 @@
 # @archastro/redline
 
+## 0.3.5
+
+### Patch Changes
+
+- 51e0949: Fix symlink resolution in redline-pull, redline-watch, and redline-tail CLI scripts
+- 12a6fc3: restore local development host permissions and fix service worker auth
+
 ## 0.3.4
 
 ### Patch Changes
