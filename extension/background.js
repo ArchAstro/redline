@@ -98,11 +98,25 @@ function markerStorageKeys(sender) {
   return new Set(['rl_last_project', `rl_items::${url.origin}${url.pathname}`]);
 }
 
+function sameHttpDocument(left, right) {
+  let tab;
+  let frame;
+  try {
+    tab = new URL(left);
+    frame = new URL(right);
+  } catch {
+    return false;
+  }
+  if (tab.protocol !== frame.protocol || !['http:', 'https:'].includes(tab.protocol)) return false;
+  return tab.origin === frame.origin && tab.pathname === frame.pathname && tab.search === frame.search;
+}
+
 async function requireEnabledContentSender(sender) {
   if (!permissionController || !sender?.tab) return;
   const senderUrl = typeof sender.url === 'string' ? sender.url : sender.tab.url;
   if (sender.id !== chrome.runtime.id || sender.frameId !== 0 ||
-      typeof senderUrl !== 'string' || sender.tab.url !== senderUrl) {
+      typeof senderUrl !== 'string' || typeof sender.tab.url !== 'string' ||
+      !sameHttpDocument(sender.tab.url, senderUrl)) {
     throw new RedlineExtensionError('invalid_page_sender', 'Page sender was rejected.');
   }
   const state = await permissionController.getState(senderUrl);
