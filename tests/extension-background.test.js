@@ -467,6 +467,73 @@ test("a stale content script cannot handle page data after its site is disabled"
   assert.equal(requests, 0);
 });
 
+test("an in-page hash change still submits from the same HTTP document", async () => {
+  const connection = {
+    client_id: "rlc_0123456789abcdef0123456789abcdef",
+    token: "t".repeat(43),
+    clear_generation: 0,
+    consent_version: 1,
+    port: 7878,
+  };
+  let submitted;
+  const background = productionBackground({
+    connection,
+    permissionControllerFactory: () => ({
+      async start() {},
+      async getState() {
+        return { supported: true, siteEnabled: true, fullVisualEnabled: false };
+      },
+      async canCaptureScreenshot() { return false; },
+    }),
+    fetch: async (url, options = {}) => {
+      if (url.endsWith("/generation")) return generationResponse();
+      if (url.endsWith("/redlines") && options.method === "POST") {
+        submitted = JSON.parse(options.body);
+        return { ok: true, status: 201, async json() { return { id: "rl_hash" }; } };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+  const sender = {
+    id: "redline-test-extension",
+    frameId: 0,
+    url: "http://localhost:6101/",
+    tab: { id: 7, url: "http://localhost:6101/#get-started" },
+  };
+
+  const response = await background.send(
+    { type: "submit-redline", payload: { comment: "these buttons should animate the scroll" } },
+    sender,
+  );
+  assert.equal(response.ok, true);
+  assert.equal(response.item.id, "rl_hash");
+  assert.equal(submitted.comment, "these buttons should animate the scroll");
+});
+
+test("a content script from a different path is still rejected", async () => {
+  const background = productionBackground({
+    fetch: async () => { throw new Error("must not fetch"); },
+    permissionControllerFactory: () => ({
+      async start() {},
+      async getState() {
+        return { supported: true, siteEnabled: true, fullVisualEnabled: false };
+      },
+    }),
+  });
+  const response = await background.send(
+    { type: "submit-redline", payload: { comment: "nope" } },
+    {
+      id: "redline-test-extension",
+      frameId: 0,
+      url: "http://localhost:6101/login",
+      tab: { id: 7, url: "http://localhost:6101/#get-started" },
+    },
+  );
+  assert.equal(response.ok, false);
+  assert.equal(response.error_code, "invalid_page_sender");
+  assert.equal(response.error, "Page sender was rejected.");
+});
+
 test("popup clear durably retries browser cleanup after the sidecar commits", async () => {
   const connection = {
     client_id: "rlc_0123456789abcdef0123456789abcdef",
