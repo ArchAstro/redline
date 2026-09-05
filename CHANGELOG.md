@@ -1,5 +1,11 @@
 # @archastro/redline
 
+## 0.3.6
+
+### Patch Changes
+
+- f54e5db: Accept in-page hash changes when checking that a content-script sender still matches its tab. Clicking a `#section` link no longer makes Submit fail with "Page sender was rejected."
+
 ## 0.3.5
 
 ### Patch Changes

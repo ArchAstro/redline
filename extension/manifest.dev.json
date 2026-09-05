@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Redline",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Highlight web UI, leave redlines, and pipe them to Claude Code or Codex.",
   "minimum_chrome_version": "111",
   "permissions": [
